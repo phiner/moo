@@ -1,0 +1,14 @@
+# Copy to mooc.toml (or set MOOC_CONFIG) to customize.
+
+[opend]
+host = "127.0.0.1"
+port = 11111
+
+[trading]
+# Policy: this client is SIMULATE-only. REAL is intentionally not enabled.
+default_trd_env = "SIMULATE"
+allowed_trd_envs = ["SIMULATE"]
+default_currency = "USD"
+
+[ui]
+market = "US"
