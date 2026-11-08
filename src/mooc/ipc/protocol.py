@@ -48,10 +48,52 @@ class GetComboAnalysis(BaseModel):
     legs: list[Leg] = Field(min_length=1, max_length=MAX_LEGS)
 
 
+# -- trade requests (read-only) ------------------------------------------
+class GetAccounts(BaseModel):
+    kind: Literal["GetAccounts"] = "GetAccounts"
+    request_id: int | None = None
+    trd_env: Literal["SIMULATE", "REAL"] | None = None
+
+
+class GetFunds(BaseModel):
+    kind: Literal["GetFunds"] = "GetFunds"
+    request_id: int | None = None
+    trd_env: Literal["SIMULATE", "REAL"] | None = None
+    currency: str | None = None
+
+
+class GetPositions(BaseModel):
+    kind: Literal["GetPositions"] = "GetPositions"
+    request_id: int | None = None
+    trd_env: Literal["SIMULATE", "REAL"] | None = None
+    code: str | None = None
+    currency: str | None = None
+
+
+class GetOrders(BaseModel):
+    kind: Literal["GetOrders"] = "GetOrders"
+    request_id: int | None = None
+    trd_env: Literal["SIMULATE", "REAL"] | None = None
+    history: bool = False
+    status_filter: list[str] = Field(default_factory=list)
+    code: str | None = None
+    start: str | None = None
+    end: str | None = None
+
+
 Request = Annotated[
-    GetOptionExpirations | GetOptionChain | GetComboAnalysis,
+    GetOptionExpirations
+    | GetOptionChain
+    | GetComboAnalysis
+    | GetAccounts
+    | GetFunds
+    | GetPositions
+    | GetOrders,
     Field(discriminator="kind"),
 ]
+
+# Request types handled by the trade service (routed separately by the daemon).
+TRADE_REQUESTS = (GetAccounts, GetFunds, GetPositions, GetOrders)
 
 
 # -- responses ------------------------------------------------------------
@@ -99,8 +141,108 @@ class ErrorResult(BaseModel):
     message: str
 
 
+# -- trade responses (read-only) -----------------------------------------
+class AccountDTO(BaseModel):
+    acc_id: int
+    trd_env: str
+    acc_type: str
+    card_num: str
+    security_firm: str
+    sim_acc_type: str
+    acc_status: str
+    acc_role: str
+    trdmarket_auth: list[str]
+
+
+class AccountsResult(BaseModel):
+    kind: Literal["AccountsResult"] = "AccountsResult"
+    request_id: int | None = None
+    accounts: list[AccountDTO]
+
+
+class FundsDTO(BaseModel):
+    trd_env: str
+    currency: str
+    cash: float | None
+    total_assets: float | None
+    securities_assets: float | None
+    market_val: float | None
+    available_funds: float | None
+    frozen_cash: float | None
+    power: float | None
+    unrealized_pl: float | None
+    realized_pl: float | None
+    initial_margin: float | None
+    maintenance_margin: float | None
+    risk_level: str
+
+
+class FundsResult(BaseModel):
+    kind: Literal["FundsResult"] = "FundsResult"
+    request_id: int | None = None
+    funds: FundsDTO | None
+
+
+class PositionDTO(BaseModel):
+    code: str
+    stock_name: str
+    position_market: str
+    qty: float
+    can_sell_qty: float
+    cost_price: float | None
+    average_cost: float | None
+    nominal_price: float | None
+    market_val: float | None
+    pl_ratio: float | None
+    pl_val: float | None
+    unrealized_pl: float | None
+    realized_pl: float | None
+    currency: str
+    position_side: str
+    strategy_type: str
+
+
+class PositionsResult(BaseModel):
+    kind: Literal["PositionsResult"] = "PositionsResult"
+    request_id: int | None = None
+    positions: list[PositionDTO]
+
+
+class OrderDTO(BaseModel):
+    code: str
+    stock_name: str
+    order_market: str
+    trd_side: str
+    order_type: str
+    order_status: str
+    order_id: str
+    qty: float
+    price: float
+    dealt_qty: float
+    dealt_avg_price: float
+    create_time: str
+    updated_time: str
+    time_in_force: str
+    currency: str
+    remark: str
+    last_err_msg: str
+
+
+class OrdersResult(BaseModel):
+    kind: Literal["OrdersResult"] = "OrdersResult"
+    request_id: int | None = None
+    orders: list[OrderDTO]
+
+
 Response = Annotated[
-    OptionExpirationsResult | OptionChainResult | ComboAnalysisResult | ErrorResult,
+    OptionExpirationsResult
+    | OptionChainResult
+    | ComboAnalysisResult
+    | AccountsResult
+    | FundsResult
+    | PositionsResult
+    | OrdersResult
+    | ErrorResult,
     Field(discriminator="kind"),
 ]
 

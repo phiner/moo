@@ -19,6 +19,9 @@ from ..domain.options import (
 )
 from .client import OpendClient
 from .errors import OpendRejected
+from .values import require_ok as _require_ok
+from .values import to_float as _num
+from .values import to_int as _int
 
 _DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
@@ -34,30 +37,6 @@ def _to_sdk_legs(legs: list[OptionLeg]):
         sdk.quantity = float(leg.quantity)
         out.append(sdk)
     return out
-
-
-def _require_ok(api: str, ret, data) -> None:
-    from moomoo import RET_OK
-
-    if ret != RET_OK:
-        raise OpendRejected(api, str(data))
-
-
-def _num(value) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text.upper() in {"N/A", "NAN", "--"}:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-def _int(value) -> int | None:
-    number = _num(value)
-    return int(number) if number is not None else None
 
 
 def _parse_date(value) -> date:

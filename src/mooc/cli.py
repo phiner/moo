@@ -10,13 +10,15 @@ import math
 import os
 import signal
 import sys
+from dataclasses import asdict
 
 from .config import load_config
 from .daemon.lifecycle import daemon_paths, is_running
 from .domain.options import LegAction, OptionLeg
-from .opend import option
+from .opend import option, trade
 from .opend.client import OpendClient
 from .opend.errors import MoocError
+from .policy import resolve_trd_env
 
 
 # -- shared ---------------------------------------------------------------
@@ -141,6 +143,90 @@ def _cmd_probe_combo(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- probe (trade, read-only, direct SDK) ---------------------------------
+def _cmd_probe_accounts(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    trd_env = resolve_trd_env(args.trd_env, cfg.trading)
+    with _connected() as client:
+        accounts = trade.list_accounts(client, trd_env)
+    if args.json:
+        print(json.dumps([asdict(a) for a in accounts], ensure_ascii=False, indent=2))
+    else:
+        print(f"accounts ({trd_env}): {len(accounts)}")
+        for a in accounts:
+            print(
+                f"  acc_id={a.acc_id} type={a.acc_type} firm={a.security_firm} "
+                f"status={a.acc_status} auth={a.trdmarket_auth}"
+            )
+    return 0
+
+
+def _cmd_probe_funds(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    trd_env = resolve_trd_env(args.trd_env, cfg.trading)
+    currency = args.currency or cfg.trading.default_currency
+    with _connected() as client:
+        funds = trade.get_funds(client, trd_env, currency=currency)
+    if funds is None:
+        print(f"no funds returned for {trd_env}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(funds), ensure_ascii=False, indent=2))
+    else:
+        print(f"funds ({funds.trd_env} {funds.currency})")
+        print(f"  total_assets   : {funds.total_assets}")
+        print(f"  cash           : {funds.cash}")
+        print(f"  available_funds: {funds.available_funds}")
+        print(f"  market_val     : {funds.market_val}")
+        print(f"  unrealized_pl  : {funds.unrealized_pl}")
+        print(f"  risk_level     : {funds.risk_level}")
+    return 0
+
+
+def _cmd_probe_positions(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    trd_env = resolve_trd_env(args.trd_env, cfg.trading)
+    currency = args.currency or cfg.trading.default_currency
+    with _connected() as client:
+        positions = trade.list_positions(client, trd_env, code=args.code, currency=currency)
+    if args.json:
+        print(json.dumps([asdict(p) for p in positions], ensure_ascii=False, indent=2))
+    else:
+        print(f"positions ({trd_env}): {len(positions)}")
+        for p in positions:
+            print(
+                f"  {p.code:<24} qty={p.qty:<6} avg={p.average_cost} "
+                f"mv={p.market_val} pl={p.pl_val}"
+            )
+    return 0
+
+
+def _cmd_probe_orders(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    trd_env = resolve_trd_env(args.trd_env, cfg.trading)
+    with _connected() as client:
+        orders = trade.list_orders(
+            client,
+            trd_env,
+            history=args.history,
+            status_filter=args.status or [],
+            code=args.code,
+            start=args.start,
+            end=args.end,
+        )
+    if args.json:
+        print(json.dumps([asdict(o) for o in orders], ensure_ascii=False, indent=2))
+    else:
+        label = "history orders" if args.history else "orders"
+        print(f"{label} ({trd_env}): {len(orders)}")
+        for o in orders:
+            print(
+                f"  {o.order_id:<12} {o.code:<24} {o.trd_side:<4} "
+                f"{o.order_status:<14} qty={o.qty} price={o.price}"
+            )
+    return 0
+
+
 # -- daemon ---------------------------------------------------------------
 def _cmd_daemon_run(_args: argparse.Namespace) -> int:
     from .daemon.server import DaemonServer
@@ -149,8 +235,9 @@ def _cmd_daemon_run(_args: argparse.Namespace) -> int:
     if is_running(paths):
         print(f"daemon already running (pid {paths.readable_pid()})", file=sys.stderr)
         return 1
-    client = _connected().connect()
-    server = DaemonServer(paths, client)
+    cfg = load_config()
+    client = OpendClient(host=cfg.opend.host, port=cfg.opend.port).connect()
+    server = DaemonServer(paths, client, cfg.trading)
     print(f"daemon starting; socket={paths.socket}")
     try:
         asyncio.run(server.serve_forever())
@@ -223,6 +310,34 @@ def build_parser() -> argparse.ArgumentParser:
     combo.add_argument("legs")
     combo.add_argument("--json", action="store_true")
     combo.set_defaults(func=_cmd_probe_combo)
+
+    accounts = probe_sub.add_parser("accounts", help="list trade accounts")
+    accounts.add_argument("--trd-env")
+    accounts.add_argument("--json", action="store_true")
+    accounts.set_defaults(func=_cmd_probe_accounts)
+
+    funds = probe_sub.add_parser("funds", help="account funds snapshot")
+    funds.add_argument("--trd-env")
+    funds.add_argument("--currency")
+    funds.add_argument("--json", action="store_true")
+    funds.set_defaults(func=_cmd_probe_funds)
+
+    positions = probe_sub.add_parser("positions", help="list open positions")
+    positions.add_argument("--trd-env")
+    positions.add_argument("--code")
+    positions.add_argument("--currency")
+    positions.add_argument("--json", action="store_true")
+    positions.set_defaults(func=_cmd_probe_positions)
+
+    orders = probe_sub.add_parser("orders", help="list orders (current or --history)")
+    orders.add_argument("--trd-env")
+    orders.add_argument("--history", action="store_true")
+    orders.add_argument("--status", action="append", help="order status filter (repeatable)")
+    orders.add_argument("--code")
+    orders.add_argument("--start")
+    orders.add_argument("--end")
+    orders.add_argument("--json", action="store_true")
+    orders.set_defaults(func=_cmd_probe_orders)
 
     daemon = sub.add_parser("daemon", help="manage the mooc daemon")
     daemon_sub = daemon.add_subparsers(dest="daemon", required=True)

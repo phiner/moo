@@ -29,14 +29,22 @@ from ..ipc.client import IpcClient
 from ..opend.errors import MoocError
 
 
+def _fmt(value: float | None) -> str:
+    return "-" if value is None else f"{value:,.2f}"
+
+
 class MoocApp(App):
-    """S1 projection: option chain and combo bid/ask analysis."""
+    """Projection over the daemon: option chain, combo analysis, account, orders."""
 
     BINDINGS: ClassVar = [("q", "quit", "Quit"), ("r", "reload", "Reload")]
     CSS = """
     #chain { height: 1fr; }
     #chain-title { padding: 0 1; }
     #combo-result { padding: 1; }
+    #account-title { padding: 0 1; }
+    #positions { height: 1fr; }
+    #orders-title { padding: 0 1; }
+    #orders { height: 1fr; }
     """
 
     def __init__(self, socket_path: Path) -> None:
@@ -64,11 +72,25 @@ class MoocApp(App):
                     "Enter legs JSON and press Enter to get combo bid/ask + P&L.",
                     id="combo-result",
                 )
+            with TabPane("Account", id="tab-account"):
+                yield Label("loading…", id="account-title")
+                yield DataTable(id="positions")
+            with TabPane("Orders", id="tab-orders"):
+                yield Label("loading…", id="orders-title")
+                yield DataTable(id="orders")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#chain", DataTable).add_columns("code", "expiry", "type", "strike")
+        self.query_one("#positions", DataTable).add_columns(
+            "code", "qty", "avg_cost", "market_val", "pl_val", "side"
+        )
+        self.query_one("#orders", DataTable).add_columns(
+            "order_id", "code", "side", "status", "qty", "price"
+        )
         self._load_chain()
+        self._load_account()
+        self._load_orders()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "underlying":
@@ -79,6 +101,8 @@ class MoocApp(App):
 
     def action_reload(self) -> None:
         self._load_chain()
+        self._load_account()
+        self._load_orders()
 
     # -- chain -------------------------------------------------------------
     @work(exclusive=True, thread=True)
@@ -117,6 +141,77 @@ class MoocApp(App):
     def _show_chain_error(self, message: str) -> None:
         self.query_one("#chain", DataTable).clear()
         self.query_one("#chain-title", Label).update(message)
+
+    # -- account -----------------------------------------------------------
+    @work(exclusive=True, thread=True)
+    def _load_account(self) -> None:
+        try:
+            funds = self._ipc.request(protocol.GetFunds())
+            if funds.kind != "FundsResult":
+                raise MoocError(getattr(funds, "message", "unexpected response"))
+            positions = self._ipc.request(protocol.GetPositions())
+            if positions.kind != "PositionsResult":
+                raise MoocError(getattr(positions, "message", "unexpected response"))
+            if funds.funds is None:
+                summary = "no funds"
+            else:
+                f = funds.funds
+                summary = (
+                    f"{f.trd_env} {f.currency}  total={_fmt(f.total_assets)} "
+                    f"cash={_fmt(f.cash)} avail={_fmt(f.available_funds)} "
+                    f"mv={_fmt(f.market_val)} upl={_fmt(f.unrealized_pl)}"
+                )
+            rows = [
+                (
+                    p.code,
+                    f"{p.qty:g}",
+                    _fmt(p.average_cost),
+                    _fmt(p.market_val),
+                    _fmt(p.pl_val),
+                    p.position_side,
+                )
+                for p in positions.positions
+            ]
+            self.call_from_thread(self._show_account, summary, rows)
+        except Exception as exc:  # noqa: BLE001 - report any failure in the UI
+            self.call_from_thread(self._show_account_error, f"error: {exc}")
+
+    def _show_account(self, summary: str, rows) -> None:
+        table = self.query_one("#positions", DataTable)
+        table.clear()
+        for row in rows:
+            table.add_row(*row)
+        self.query_one("#account-title", Label).update(f"{summary} — {len(rows)} positions")
+
+    def _show_account_error(self, message: str) -> None:
+        self.query_one("#positions", DataTable).clear()
+        self.query_one("#account-title", Label).update(message)
+
+    # -- orders ------------------------------------------------------------
+    @work(exclusive=True, thread=True)
+    def _load_orders(self) -> None:
+        try:
+            orders = self._ipc.request(protocol.GetOrders())
+            if orders.kind != "OrdersResult":
+                raise MoocError(getattr(orders, "message", "unexpected response"))
+            rows = [
+                (o.order_id, o.code, o.trd_side, o.order_status, f"{o.qty:g}", f"{o.price:.2f}")
+                for o in orders.orders
+            ]
+            self.call_from_thread(self._show_orders, rows)
+        except Exception as exc:  # noqa: BLE001 - report any failure in the UI
+            self.call_from_thread(self._show_orders_error, f"error: {exc}")
+
+    def _show_orders(self, rows) -> None:
+        table = self.query_one("#orders", DataTable)
+        table.clear()
+        for row in rows:
+            table.add_row(*row)
+        self.query_one("#orders-title", Label).update(f"open orders — {len(rows)}")
+
+    def _show_orders_error(self, message: str) -> None:
+        self.query_one("#orders", DataTable).clear()
+        self.query_one("#orders-title", Label).update(message)
 
     # -- strategy ----------------------------------------------------------
     @work(exclusive=True, thread=True)

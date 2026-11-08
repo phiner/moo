@@ -8,9 +8,11 @@ import logging
 import os
 import signal
 
+from ..config import AppConfig, TradingConfig
 from ..ipc import protocol
 from ..opend.client import OpendClient
 from ..services.option_data import OptionDataService
+from ..services.trade import TradeService
 from .lifecycle import (
     DaemonPaths,
     acquire_startup_lock,
@@ -21,10 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 class DaemonServer:
-    def __init__(self, paths: DaemonPaths, client: OpendClient) -> None:
+    def __init__(
+        self,
+        paths: DaemonPaths,
+        client: OpendClient,
+        trading: TradingConfig | None = None,
+    ) -> None:
         self._paths = paths
         self._client = client
         self._service = OptionDataService(client)
+        self._trade_service = TradeService(client, trading or AppConfig().trading)
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -47,7 +55,12 @@ class DaemonServer:
                     await self._send(writer, protocol.ErrorResult(message=f"bad request: {exc}"))
                     continue
                 # SDK calls are blocking; keep the event loop responsive.
-                response = await asyncio.to_thread(self._service.dispatch, request)
+                service = (
+                    self._trade_service
+                    if isinstance(request, protocol.TRADE_REQUESTS)
+                    else self._service
+                )
+                response = await asyncio.to_thread(service.dispatch, request)
                 await self._send(writer, response)
         except (ConnectionResetError, BrokenPipeError):
             pass

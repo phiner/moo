@@ -1,7 +1,8 @@
 """Thin wrapper around the official ``moomoo-api`` SDK.
 
-Owns the quote context used by the option data service (S1). Trade contexts
-are added in a later stage.
+Owns the quote context used by the option data service (S1) and, lazily, the
+US security trade context used by the trade service (S2). The trade context is
+created on first use so a missing trade login never blocks quote-only work.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class OpendClient:
         self.port = port
         self._ai_type = ai_type
         self._quote_ctx = None
+        self._trade_ctx = None
 
     # -- connectivity ------------------------------------------------------
     def check_tcp(self, timeout: float = 2.0) -> None:
@@ -95,12 +97,37 @@ class OpendClient:
             raise MoocError("client is not connected")
         return self._quote_ctx
 
+    @property
+    def trade_ctx(self):
+        """Lazily open the US security trade context on first access."""
+        if self._trade_ctx is None:
+            from moomoo import OpenSecTradeContext, TrdMarket
+
+            kwargs: dict = {
+                "filter_trdmarket": TrdMarket.US,
+                "host": self.host,
+                "port": self.port,
+            }
+            if self._ai_type is not None:
+                kwargs["ai_type"] = self._ai_type
+            try:
+                self._trade_ctx = OpenSecTradeContext(**kwargs)
+            except Exception as exc:  # SDK raises assorted transport errors
+                raise OpendUnavailable(f"failed to open trade context: {exc}") from exc
+            logger.debug("trade context connected to %s:%s", self.host, self.port)
+        return self._trade_ctx
+
     def close(self) -> None:
         if self._quote_ctx is not None:
             try:
                 self._quote_ctx.close()
             finally:
                 self._quote_ctx = None
+        if self._trade_ctx is not None:
+            try:
+                self._trade_ctx.close()
+            finally:
+                self._trade_ctx = None
 
     # -- context manager ---------------------------------------------------
     def __enter__(self) -> Self:
