@@ -30,6 +30,7 @@ class Account:
 class AccountFunds:
     """Account-level funds snapshot from ``accinfo_query``."""
 
+    acc_id: int
     trd_env: str
     currency: str
     cash: float | None

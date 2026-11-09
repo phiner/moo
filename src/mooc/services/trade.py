@@ -73,10 +73,13 @@ class TradeService:
 
     def _funds(self, request: protocol.GetFunds) -> protocol.Response:
         trd_env = resolve_trd_env(request.trd_env, self._trading)
-        funds = trade.get_funds(self._client, trd_env, currency=self._currency(request.currency))
+        funds = trade.get_funds(
+            self._client, trd_env, request.acc_id, currency=self._currency(request.currency)
+        )
         dto = None
         if funds is not None:
             dto = protocol.FundsDTO(
+                acc_id=funds.acc_id,
                 trd_env=funds.trd_env,
                 currency=funds.currency,
                 cash=funds.cash,
@@ -92,15 +95,20 @@ class TradeService:
                 maintenance_margin=funds.maintenance_margin,
                 risk_level=funds.risk_level,
             )
-        return protocol.FundsResult(request_id=request.request_id, funds=dto)
+        return protocol.FundsResult(request_id=request.request_id, acc_id=request.acc_id, funds=dto)
 
     def _positions(self, request: protocol.GetPositions) -> protocol.Response:
         trd_env = resolve_trd_env(request.trd_env, self._trading)
         positions = trade.list_positions(
-            self._client, trd_env, code=request.code, currency=self._currency(request.currency)
+            self._client,
+            trd_env,
+            request.acc_id,
+            code=request.code,
+            currency=self._currency(request.currency),
         )
         return protocol.PositionsResult(
             request_id=request.request_id,
+            acc_id=request.acc_id,
             positions=[
                 protocol.PositionDTO(
                     code=p.code,
@@ -129,6 +137,7 @@ class TradeService:
         orders = trade.list_orders(
             self._client,
             trd_env,
+            request.acc_id,
             history=request.history,
             status_filter=request.status_filter,
             code=request.code,
@@ -137,6 +146,7 @@ class TradeService:
         )
         return protocol.OrdersResult(
             request_id=request.request_id,
+            acc_id=request.acc_id,
             orders=[
                 protocol.OrderDTO(
                     code=o.code,

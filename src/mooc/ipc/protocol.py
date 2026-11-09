@@ -48,6 +48,32 @@ class GetComboAnalysis(BaseModel):
     legs: list[Leg] = Field(min_length=1, max_length=MAX_LEGS)
 
 
+# -- watchlist requests (read-only) --------------------------------------
+class GetWatchlistGroups(BaseModel):
+    kind: Literal["GetWatchlistGroups"] = "GetWatchlistGroups"
+    request_id: int | None = None
+
+
+class GetWatchlistSummary(BaseModel):
+    kind: Literal["GetWatchlistSummary"] = "GetWatchlistSummary"
+    request_id: int | None = None
+    group_name: str = Field(min_length=1)
+    limit: int = Field(default=10, gt=0, le=200)
+
+
+class GetWatchlistMembers(BaseModel):
+    kind: Literal["GetWatchlistMembers"] = "GetWatchlistMembers"
+    request_id: int | None = None
+    group_name: str = Field(min_length=1)
+
+
+class GetUnderlyingSummary(BaseModel):
+    kind: Literal["GetUnderlyingSummary"] = "GetUnderlyingSummary"
+    request_id: int | None = None
+    code: str = Field(min_length=1)
+    name: str = ""
+
+
 # -- trade requests (read-only) ------------------------------------------
 class GetAccounts(BaseModel):
     kind: Literal["GetAccounts"] = "GetAccounts"
@@ -58,6 +84,7 @@ class GetAccounts(BaseModel):
 class GetFunds(BaseModel):
     kind: Literal["GetFunds"] = "GetFunds"
     request_id: int | None = None
+    acc_id: int = Field(gt=0)
     trd_env: Literal["SIMULATE", "REAL"] | None = None
     currency: str | None = None
 
@@ -65,6 +92,7 @@ class GetFunds(BaseModel):
 class GetPositions(BaseModel):
     kind: Literal["GetPositions"] = "GetPositions"
     request_id: int | None = None
+    acc_id: int = Field(gt=0)
     trd_env: Literal["SIMULATE", "REAL"] | None = None
     code: str | None = None
     currency: str | None = None
@@ -73,6 +101,7 @@ class GetPositions(BaseModel):
 class GetOrders(BaseModel):
     kind: Literal["GetOrders"] = "GetOrders"
     request_id: int | None = None
+    acc_id: int = Field(gt=0)
     trd_env: Literal["SIMULATE", "REAL"] | None = None
     history: bool = False
     status_filter: list[str] = Field(default_factory=list)
@@ -85,6 +114,10 @@ Request = Annotated[
     GetOptionExpirations
     | GetOptionChain
     | GetComboAnalysis
+    | GetWatchlistGroups
+    | GetWatchlistSummary
+    | GetWatchlistMembers
+    | GetUnderlyingSummary
     | GetAccounts
     | GetFunds
     | GetPositions
@@ -141,6 +174,56 @@ class ErrorResult(BaseModel):
     message: str
 
 
+# -- watchlist responses (read-only) -------------------------------------
+class GroupDTO(BaseModel):
+    name: str
+    group_type: str
+
+
+class WatchlistGroupsResult(BaseModel):
+    kind: Literal["WatchlistGroupsResult"] = "WatchlistGroupsResult"
+    request_id: int | None = None
+    groups: list[GroupDTO]
+
+
+class UnderlyingSummaryDTO(BaseModel):
+    code: str
+    name: str
+    last_price: float | None
+    expiry: str | None
+    atm_strike: float | None
+    call_bid: float | None
+    call_ask: float | None
+    put_bid: float | None
+    put_ask: float | None
+
+
+class WatchlistSummaryResult(BaseModel):
+    kind: Literal["WatchlistSummaryResult"] = "WatchlistSummaryResult"
+    request_id: int | None = None
+    group_name: str
+    items: list[UnderlyingSummaryDTO]
+
+
+class MemberDTO(BaseModel):
+    code: str
+    name: str
+
+
+class WatchlistMembersResult(BaseModel):
+    kind: Literal["WatchlistMembersResult"] = "WatchlistMembersResult"
+    request_id: int | None = None
+    group_name: str
+    total: int
+    items: list[MemberDTO]
+
+
+class UnderlyingSummaryResult(BaseModel):
+    kind: Literal["UnderlyingSummaryResult"] = "UnderlyingSummaryResult"
+    request_id: int | None = None
+    item: UnderlyingSummaryDTO | None
+
+
 # -- trade responses (read-only) -----------------------------------------
 class AccountDTO(BaseModel):
     acc_id: int
@@ -161,6 +244,7 @@ class AccountsResult(BaseModel):
 
 
 class FundsDTO(BaseModel):
+    acc_id: int
     trd_env: str
     currency: str
     cash: float | None
@@ -180,6 +264,7 @@ class FundsDTO(BaseModel):
 class FundsResult(BaseModel):
     kind: Literal["FundsResult"] = "FundsResult"
     request_id: int | None = None
+    acc_id: int
     funds: FundsDTO | None
 
 
@@ -205,6 +290,7 @@ class PositionDTO(BaseModel):
 class PositionsResult(BaseModel):
     kind: Literal["PositionsResult"] = "PositionsResult"
     request_id: int | None = None
+    acc_id: int
     positions: list[PositionDTO]
 
 
@@ -231,6 +317,7 @@ class OrderDTO(BaseModel):
 class OrdersResult(BaseModel):
     kind: Literal["OrdersResult"] = "OrdersResult"
     request_id: int | None = None
+    acc_id: int
     orders: list[OrderDTO]
 
 
@@ -238,6 +325,10 @@ Response = Annotated[
     OptionExpirationsResult
     | OptionChainResult
     | ComboAnalysisResult
+    | WatchlistGroupsResult
+    | WatchlistSummaryResult
+    | WatchlistMembersResult
+    | UnderlyingSummaryResult
     | AccountsResult
     | FundsResult
     | PositionsResult

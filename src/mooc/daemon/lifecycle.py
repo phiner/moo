@@ -17,6 +17,7 @@ class DaemonPaths:
     socket: Path
     pid: Path
     lock: Path
+    log: Path
 
     def ensure_dir(self) -> None:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -35,6 +36,7 @@ def daemon_paths(runtime_dir: Path | None = None) -> DaemonPaths:
         socket=base / "mooc.sock",
         pid=base / "mooc.pid",
         lock=base / "mooc.lock",
+        log=base / "mooc.log",
     )
 
 

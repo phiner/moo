@@ -19,6 +19,14 @@ def test_defaults(monkeypatch):
     assert cfg.trading.allowed_trd_envs == ("SIMULATE",)
     assert cfg.trading.default_currency == "USD"
     assert cfg.ui.market == "US"
+    assert cfg.ui.default_group == ""
+
+
+def test_ui_default_group_from_toml(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MOOC_DEFAULT_GROUP", raising=False)
+    cfg_file = tmp_path / "mooc.toml"
+    cfg_file.write_text("[ui]\ndefault_group = 'My Group'\n")
+    assert load_config(cfg_file).ui.default_group == "My Group"
 
 
 def test_toml_and_env_override(tmp_path: Path, monkeypatch):

@@ -12,3 +12,5 @@ default_currency = "USD"
 
 [ui]
 market = "US"
+# Default self-selected group shown in the TUI. Empty = first custom group.
+default_group = ""

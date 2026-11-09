@@ -1,4 +1,4 @@
-"""Policy-free domain types for mooc (options + trade)."""
+"""Policy-free domain types for mooc (options + watchlist + trade)."""
 
 from .options import (
     ComboAnalysis,
@@ -10,6 +10,7 @@ from .options import (
     OptionType,
 )
 from .trade import Account, AccountFunds, Order, Position, TradeEnv
+from .watchlist import Security, UnderlyingSummary, WatchlistGroup
 
 __all__ = [
     "Account",
@@ -23,5 +24,8 @@ __all__ = [
     "OptionType",
     "Order",
     "Position",
+    "Security",
     "TradeEnv",
+    "UnderlyingSummary",
+    "WatchlistGroup",
 ]

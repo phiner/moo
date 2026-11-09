@@ -14,14 +14,17 @@ class IpcClient:
         self._path = Path(socket_path)
         self._timeout = timeout
 
-    def request(self, request) -> protocol.Response:
-        """Send one request and return one response, wrapping all failures as MoocError."""
+    def request(self, request, timeout: float | None = None) -> protocol.Response:
+        """Send one request and return one response, wrapping all failures as MoocError.
+
+        ``timeout`` overrides the default for requests that may wait server-side.
+        """
         if not self._path.exists():
             raise MoocError(f"daemon socket not found: {self._path} (is the daemon running?)")
         buffer = bytearray()
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(self._timeout)
+                sock.settimeout(timeout if timeout is not None else self._timeout)
                 try:
                     sock.connect(str(self._path))
                 except OSError as exc:

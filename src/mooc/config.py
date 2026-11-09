@@ -34,6 +34,7 @@ class TradingConfig:
 @dataclass(frozen=True)
 class UiConfig:
     market: str = "US"
+    default_group: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,11 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
                 trading.get("default_currency", cfg.trading.default_currency)
             ).upper(),
         ),
-        ui=replace(cfg.ui, market=str(ui.get("market", cfg.ui.market)).upper()),
+        ui=replace(
+            cfg.ui,
+            market=str(ui.get("market", cfg.ui.market)).upper(),
+            default_group=str(ui.get("default_group", cfg.ui.default_group)),
+        ),
     )
 
 
@@ -106,6 +111,7 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
     port = _env("OPEND_PORT")
     trd_env = _env("TRD_ENV")
     currency = _env("CURRENCY")
+    default_group = _env("DEFAULT_GROUP")
     return AppConfig(
         opend=replace(
             cfg.opend,
@@ -119,5 +125,8 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
             ),
             default_currency=currency.upper() if currency else cfg.trading.default_currency,
         ),
-        ui=cfg.ui,
+        ui=replace(
+            cfg.ui,
+            default_group=default_group if default_group is not None else cfg.ui.default_group,
+        ),
     )

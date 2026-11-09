@@ -1,6 +1,6 @@
 """OpenD/SDK access layer."""
 
-from . import option, trade
+from . import option, quote, trade, watchlist
 from .client import HealthStatus, OpendClient
 from .errors import (
     MoocError,
@@ -17,5 +17,7 @@ __all__ = [
     "OpendUnavailable",
     "TradingDisabled",
     "option",
+    "quote",
     "trade",
+    "watchlist",
 ]

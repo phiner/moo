@@ -12,20 +12,25 @@ TRADING = AppConfig().trading
 class _Ctx:
     def __init__(self, accounts: pd.DataFrame | None = None) -> None:
         self._accounts = accounts if accounts is not None else pd.DataFrame()
+        self.calls = {}
 
     def get_acc_list(self):
         return 0, self._accounts
 
     def accinfo_query(self, **kwargs):
+        self.calls["funds"] = kwargs
         return 0, pd.DataFrame()
 
     def position_list_query(self, **kwargs):
+        self.calls["positions"] = kwargs
         return 0, pd.DataFrame()
 
     def order_list_query(self, **kwargs):
+        self.calls["orders"] = kwargs
         return 0, pd.DataFrame()
 
     def history_order_list_query(self, **kwargs):
+        self.calls["history"] = kwargs
         return 0, pd.DataFrame()
 
 
@@ -68,9 +73,26 @@ def test_dispatch_accounts():
 
 def test_default_env_is_simulate():
     service = TradeService(_Client(_Ctx()), TRADING)
-    response = service.dispatch(protocol.GetFunds())
+    response = service.dispatch(protocol.GetFunds(acc_id=42))
     assert response.kind == "FundsResult"
     assert response.funds is None
+    assert response.acc_id == 42
+    assert service._client.trade_ctx.calls["funds"]["acc_id"] == 42
+
+
+def test_positions_and_orders_use_selected_account():
+    client = _Client(_Ctx())
+    service = TradeService(client, TRADING)
+
+    positions = service.dispatch(protocol.GetPositions(acc_id=51))
+    assert positions.kind == "PositionsResult"
+    assert positions.acc_id == 51
+    assert client.trade_ctx.calls["positions"]["acc_id"] == 51
+
+    orders = service.dispatch(protocol.GetOrders(acc_id=51, history=True))
+    assert orders.kind == "OrdersResult"
+    assert orders.acc_id == 51
+    assert client.trade_ctx.calls["history"]["acc_id"] == 51
 
 
 def test_disallowed_env_is_rejected():

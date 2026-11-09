@@ -40,14 +40,17 @@ def list_accounts(client: OpendClient, trd_env: str) -> list[Account]:
     return accounts
 
 
-def get_funds(client: OpendClient, trd_env: str, currency: str = "USD") -> AccountFunds | None:
-    """Return the funds snapshot for the first account in ``trd_env``."""
-    ret, data = client.trade_ctx.accinfo_query(trd_env=trd_env, currency=currency)
+def get_funds(
+    client: OpendClient, trd_env: str, acc_id: int, currency: str = "USD"
+) -> AccountFunds | None:
+    """Return the funds snapshot for ``acc_id`` in ``trd_env``."""
+    ret, data = client.trade_ctx.accinfo_query(trd_env=trd_env, acc_id=acc_id, currency=currency)
     _require_ok("accinfo_query", ret, data)
     if len(data) == 0:
         return None
     row = data.iloc[0]
     return AccountFunds(
+        acc_id=acc_id,
         trd_env=trd_env,
         currency=_text(row.get("currency")),
         cash=_num(row.get("cash")),
@@ -66,11 +69,15 @@ def get_funds(client: OpendClient, trd_env: str, currency: str = "USD") -> Accou
 
 
 def list_positions(
-    client: OpendClient, trd_env: str, code: str | None = None, currency: str = "USD"
+    client: OpendClient,
+    trd_env: str,
+    acc_id: int,
+    code: str | None = None,
+    currency: str = "USD",
 ) -> list[Position]:
-    """Return open positions for ``trd_env`` (optionally filtered by ``code``)."""
+    """Return open positions for ``acc_id`` (optionally filtered by ``code``)."""
     ret, data = client.trade_ctx.position_list_query(
-        trd_env=trd_env, code=code or "", currency=currency
+        trd_env=trd_env, acc_id=acc_id, code=code or "", currency=currency
     )
     _require_ok("position_list_query", ret, data)
     positions = []
@@ -101,6 +108,7 @@ def list_positions(
 def list_orders(
     client: OpendClient,
     trd_env: str,
+    acc_id: int,
     history: bool = False,
     status_filter: list[str] | None = None,
     code: str | None = None,
@@ -116,6 +124,7 @@ def list_orders(
             start=start or "",
             end=end or "",
             trd_env=trd_env,
+            acc_id=acc_id,
         )
         api = "history_order_list_query"
     else:
@@ -125,6 +134,7 @@ def list_orders(
             start=start or "",
             end=end or "",
             trd_env=trd_env,
+            acc_id=acc_id,
         )
         api = "order_list_query"
     _require_ok(api, ret, data)

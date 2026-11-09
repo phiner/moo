@@ -9,13 +9,16 @@ import logging
 import math
 import os
 import signal
+import subprocess
 import sys
+import time
 from dataclasses import asdict
+from pathlib import Path
 
 from .config import load_config
-from .daemon.lifecycle import daemon_paths, is_running
+from .daemon.lifecycle import daemon_paths, is_running, socket_is_live
 from .domain.options import LegAction, OptionLeg
-from .opend import option, trade
+from .opend import option, trade, watchlist
 from .opend.client import OpendClient
 from .opend.errors import MoocError
 from .policy import resolve_trd_env
@@ -49,6 +52,13 @@ def _connected() -> OpendClient:
     """Unconnected client; a ``with`` block connects and closes it."""
     cfg = load_config()
     return OpendClient(host=cfg.opend.host, port=cfg.opend.port)
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
 
 
 # -- doctor ---------------------------------------------------------------
@@ -143,6 +153,36 @@ def _cmd_probe_combo(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- probe (watchlist, read-only, direct SDK) -----------------------------
+def _cmd_probe_groups(args: argparse.Namespace) -> int:
+    with _connected() as client:
+        groups = watchlist.list_groups(client)
+    if args.json:
+        print(json.dumps([asdict(group) for group in groups], ensure_ascii=False, indent=2))
+    else:
+        print(f"groups: {len(groups)}")
+        for group in groups:
+            print(f"  {group.name} ({group.group_type})")
+    return 0
+
+
+def _cmd_probe_watchlist(args: argparse.Namespace) -> int:
+    with _connected() as client:
+        members = watchlist.list_group_members(client, args.group)
+        summaries = watchlist.group_option_summaries(client, members, limit=args.limit)
+    if args.json:
+        print(json.dumps([asdict(s) for s in summaries], ensure_ascii=False, indent=2))
+    else:
+        print(f"{args.group}: {len(summaries)} underlyings")
+        for summary in summaries:
+            print(
+                f"  {summary.code:<16} last={summary.last_price} exp={summary.expiry} "
+                f"atm={summary.atm_strike} call={summary.call_bid}/{summary.call_ask} "
+                f"put={summary.put_bid}/{summary.put_ask}"
+            )
+    return 0
+
+
 # -- probe (trade, read-only, direct SDK) ---------------------------------
 def _cmd_probe_accounts(args: argparse.Namespace) -> int:
     cfg = load_config()
@@ -166,14 +206,14 @@ def _cmd_probe_funds(args: argparse.Namespace) -> int:
     trd_env = resolve_trd_env(args.trd_env, cfg.trading)
     currency = args.currency or cfg.trading.default_currency
     with _connected() as client:
-        funds = trade.get_funds(client, trd_env, currency=currency)
+        funds = trade.get_funds(client, trd_env, args.acc_id, currency=currency)
     if funds is None:
         print(f"no funds returned for {trd_env}", file=sys.stderr)
         return 1
     if args.json:
         print(json.dumps(asdict(funds), ensure_ascii=False, indent=2))
     else:
-        print(f"funds ({funds.trd_env} {funds.currency})")
+        print(f"funds (account {funds.acc_id}, {funds.trd_env} {funds.currency})")
         print(f"  total_assets   : {funds.total_assets}")
         print(f"  cash           : {funds.cash}")
         print(f"  available_funds: {funds.available_funds}")
@@ -188,11 +228,23 @@ def _cmd_probe_positions(args: argparse.Namespace) -> int:
     trd_env = resolve_trd_env(args.trd_env, cfg.trading)
     currency = args.currency or cfg.trading.default_currency
     with _connected() as client:
-        positions = trade.list_positions(client, trd_env, code=args.code, currency=currency)
+        positions = trade.list_positions(
+            client, trd_env, args.acc_id, code=args.code, currency=currency
+        )
     if args.json:
-        print(json.dumps([asdict(p) for p in positions], ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "acc_id": args.acc_id,
+                    "trd_env": trd_env,
+                    "positions": [asdict(p) for p in positions],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
-        print(f"positions ({trd_env}): {len(positions)}")
+        print(f"positions (account {args.acc_id}, {trd_env}): {len(positions)}")
         for p in positions:
             print(
                 f"  {p.code:<24} qty={p.qty:<6} avg={p.average_cost} "
@@ -208,6 +260,7 @@ def _cmd_probe_orders(args: argparse.Namespace) -> int:
         orders = trade.list_orders(
             client,
             trd_env,
+            args.acc_id,
             history=args.history,
             status_filter=args.status or [],
             code=args.code,
@@ -215,10 +268,20 @@ def _cmd_probe_orders(args: argparse.Namespace) -> int:
             end=args.end,
         )
     if args.json:
-        print(json.dumps([asdict(o) for o in orders], ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "acc_id": args.acc_id,
+                    "trd_env": trd_env,
+                    "orders": [asdict(o) for o in orders],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         label = "history orders" if args.history else "orders"
-        print(f"{label} ({trd_env}): {len(orders)}")
+        print(f"{label} (account {args.acc_id}, {trd_env}): {len(orders)}")
         for o in orders:
             print(
                 f"  {o.order_id:<12} {o.code:<24} {o.trd_side:<4} "
@@ -228,20 +291,18 @@ def _cmd_probe_orders(args: argparse.Namespace) -> int:
 
 
 # -- daemon ---------------------------------------------------------------
-def _cmd_daemon_run(_args: argparse.Namespace) -> int:
+def _cmd_daemon_serve(_args: argparse.Namespace) -> int:
     from .daemon.server import DaemonServer
 
-    paths = daemon_paths()
-    if is_running(paths):
-        print(f"daemon already running (pid {paths.readable_pid()})", file=sys.stderr)
-        return 1
     cfg = load_config()
-    client = OpendClient(host=cfg.opend.host, port=cfg.opend.port).connect()
-    server = DaemonServer(paths, client, cfg.trading)
-    print(f"daemon starting; socket={paths.socket}")
+    paths = daemon_paths()
+    client = OpendClient(host=cfg.opend.host, port=cfg.opend.port)
     try:
-        asyncio.run(server.serve_forever())
+        client.connect()
+        asyncio.run(DaemonServer(paths, client, cfg.trading).serve_forever())
     except (MoocError, RuntimeError) as exc:
+        logger = logging.getLogger(__name__)
+        logger.exception("daemon failed")
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
@@ -249,6 +310,73 @@ def _cmd_daemon_run(_args: argparse.Namespace) -> int:
     finally:
         client.close()
     return 0
+
+
+def _cmd_daemon_run(_args: argparse.Namespace) -> int:
+    paths = daemon_paths()
+    paths.ensure_dir()
+    if is_running(paths):
+        print(f"daemon already running (pid {paths.readable_pid()})", file=sys.stderr)
+        return 1
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import argparse, logging; from mooc.cli import _cmd_daemon_serve; "
+            "logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s'); "
+            "raise SystemExit(_cmd_daemon_serve(argparse.Namespace()))"
+        ),
+    ]
+    with paths.log.open("ab") as log_file:
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError as exc:
+            print(f"[ERROR] failed to start daemon: {exc}", file=sys.stderr)
+            return 1
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            print(f"[ERROR] daemon exited during startup; see {paths.log}", file=sys.stderr)
+            _print_daemon_log_tail(paths.log)
+            return 1
+        if paths.readable_pid() == process.pid and socket_is_live(paths.socket):
+            print(f"daemon running in background (pid {process.pid}, socket {paths.socket})")
+            print(f"log: {paths.log}")
+            return 0
+        time.sleep(0.05)
+
+    print(f"[ERROR] daemon startup timed out; see {paths.log}", file=sys.stderr)
+    _stop_child(process)
+    _print_daemon_log_tail(paths.log)
+    return 1
+
+
+def _stop_child(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+def _print_daemon_log_tail(path: Path, lines: int = 20) -> None:
+    try:
+        tail = path.read_text(errors="replace").splitlines()[-lines:]
+    except OSError:
+        return
+    for line in tail:
+        print(line, file=sys.stderr)
 
 
 def _cmd_daemon_status(_args: argparse.Namespace) -> int:
@@ -278,7 +406,8 @@ def _cmd_tui(_args: argparse.Namespace) -> int:
     except ImportError as exc:
         print(f"TUI unavailable ({exc}). Install with: uv sync --extra tui", file=sys.stderr)
         return 1
-    run_tui(daemon_paths().socket)
+    cfg = load_config()
+    run_tui(daemon_paths().socket, cfg.ui.default_group)
     return 0
 
 
@@ -311,18 +440,30 @@ def build_parser() -> argparse.ArgumentParser:
     combo.add_argument("--json", action="store_true")
     combo.set_defaults(func=_cmd_probe_combo)
 
+    groups = probe_sub.add_parser("groups", help="list self-selected groups")
+    groups.add_argument("--json", action="store_true")
+    groups.set_defaults(func=_cmd_probe_groups)
+
+    watch = probe_sub.add_parser("watchlist", help="option summary for a self-selected group")
+    watch.add_argument("group")
+    watch.add_argument("--limit", type=_positive_int, default=watchlist.DEFAULT_LIMIT)
+    watch.add_argument("--json", action="store_true")
+    watch.set_defaults(func=_cmd_probe_watchlist)
+
     accounts = probe_sub.add_parser("accounts", help="list trade accounts")
     accounts.add_argument("--trd-env")
     accounts.add_argument("--json", action="store_true")
     accounts.set_defaults(func=_cmd_probe_accounts)
 
     funds = probe_sub.add_parser("funds", help="account funds snapshot")
+    funds.add_argument("--acc-id", type=_positive_int, required=True)
     funds.add_argument("--trd-env")
     funds.add_argument("--currency")
     funds.add_argument("--json", action="store_true")
     funds.set_defaults(func=_cmd_probe_funds)
 
     positions = probe_sub.add_parser("positions", help="list open positions")
+    positions.add_argument("--acc-id", type=_positive_int, required=True)
     positions.add_argument("--trd-env")
     positions.add_argument("--code")
     positions.add_argument("--currency")
@@ -330,6 +471,7 @@ def build_parser() -> argparse.ArgumentParser:
     positions.set_defaults(func=_cmd_probe_positions)
 
     orders = probe_sub.add_parser("orders", help="list orders (current or --history)")
+    orders.add_argument("--acc-id", type=_positive_int, required=True)
     orders.add_argument("--trd-env")
     orders.add_argument("--history", action="store_true")
     orders.add_argument("--status", action="append", help="order status filter (repeatable)")

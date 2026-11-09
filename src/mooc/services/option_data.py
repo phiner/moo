@@ -12,8 +12,9 @@ from __future__ import annotations
 import threading
 
 from ..domain.options import LegAction, OptionLeg
+from ..domain.watchlist import Security
 from ..ipc import protocol
-from ..opend import option
+from ..opend import option, watchlist
 from ..opend.client import OpendClient
 from ..opend.errors import MoocError
 
@@ -42,6 +43,14 @@ class OptionDataService:
             return self._chain(request)
         if isinstance(request, protocol.GetComboAnalysis):
             return self._combo(request)
+        if isinstance(request, protocol.GetWatchlistGroups):
+            return self._watchlist_groups(request)
+        if isinstance(request, protocol.GetWatchlistSummary):
+            return self._watchlist_summary(request)
+        if isinstance(request, protocol.GetWatchlistMembers):
+            return self._watchlist_members(request)
+        if isinstance(request, protocol.GetUnderlyingSummary):
+            return self._underlying_summary(request)
         return protocol.ErrorResult(request_id=request_id, message="unknown request kind")
 
     # -- handlers ----------------------------------------------------------
@@ -97,4 +106,52 @@ class OptionDataService:
             prob_profit=analysis.prob_profit,
             delta=analysis.delta,
             theta=analysis.theta,
+        )
+
+    def _watchlist_groups(self, request: protocol.GetWatchlistGroups) -> protocol.Response:
+        groups = watchlist.list_groups(self._client)
+        return protocol.WatchlistGroupsResult(
+            request_id=request.request_id,
+            groups=[
+                protocol.GroupDTO(name=group.name, group_type=group.group_type) for group in groups
+            ],
+        )
+
+    def _summary_dto(self, summary) -> protocol.UnderlyingSummaryDTO:
+        return protocol.UnderlyingSummaryDTO(
+            code=summary.code,
+            name=summary.name,
+            last_price=summary.last_price,
+            expiry=summary.expiry,
+            atm_strike=summary.atm_strike,
+            call_bid=summary.call_bid,
+            call_ask=summary.call_ask,
+            put_bid=summary.put_bid,
+            put_ask=summary.put_ask,
+        )
+
+    def _watchlist_summary(self, request: protocol.GetWatchlistSummary) -> protocol.Response:
+        members = watchlist.list_group_members(self._client, request.group_name)
+        summaries = watchlist.group_option_summaries(self._client, members, limit=request.limit)
+        return protocol.WatchlistSummaryResult(
+            request_id=request.request_id,
+            group_name=request.group_name,
+            items=[self._summary_dto(summary) for summary in summaries],
+        )
+
+    def _watchlist_members(self, request: protocol.GetWatchlistMembers) -> protocol.Response:
+        members = watchlist.list_group_members(self._client, request.group_name)
+        return protocol.WatchlistMembersResult(
+            request_id=request.request_id,
+            group_name=request.group_name,
+            total=len(members),
+            items=[protocol.MemberDTO(code=member.code, name=member.name) for member in members],
+        )
+
+    def _underlying_summary(self, request: protocol.GetUnderlyingSummary) -> protocol.Response:
+        member = Security(code=request.code, name=request.name, stock_type="")
+        summary = watchlist.summarize_underlying(self._client, member)
+        return protocol.UnderlyingSummaryResult(
+            request_id=request.request_id,
+            item=self._summary_dto(summary),
         )

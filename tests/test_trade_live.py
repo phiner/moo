@@ -23,7 +23,9 @@ def client():
 def test_accounts_and_positions(client):
     try:
         accounts = trade.list_accounts(client, "SIMULATE")
-        positions = trade.list_positions(client, "SIMULATE")
+        if not accounts:
+            pytest.skip("no SIMULATE account available")
+        positions = trade.list_positions(client, "SIMULATE", accounts[0].acc_id)
     except OpendUnavailable:
         pytest.skip("trade context unavailable")
     assert isinstance(accounts, list)

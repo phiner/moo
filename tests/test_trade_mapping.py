@@ -8,20 +8,25 @@ from mooc.opend import trade
 class _FakeCtx:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
+        self.calls = {}
 
     def get_acc_list(self):
         return 0, self._frames["accounts"]
 
     def accinfo_query(self, **kwargs):
+        self.calls["funds"] = kwargs
         return 0, self._frames["funds"]
 
     def position_list_query(self, **kwargs):
+        self.calls["positions"] = kwargs
         return 0, self._frames["positions"]
 
     def order_list_query(self, **kwargs):
+        self.calls["orders"] = kwargs
         return 0, self._frames["orders"]
 
     def history_order_list_query(self, **kwargs):
+        self.calls["history"] = kwargs
         return 0, self._frames["history"]
 
 
@@ -90,16 +95,19 @@ def test_get_funds_maps_fields_and_missing_markers():
             }
         ]
     )
-    result = trade.get_funds(_client(funds=funds), "SIMULATE")
+    client = _client(funds=funds)
+    result = trade.get_funds(client, "SIMULATE", 42)
     assert result is not None
     assert result.cash == 1000.0
     assert result.total_assets is None
     assert result.unrealized_pl == -12.5
     assert result.risk_level == "SAFE"
+    assert result.acc_id == 42
+    assert client.trade_ctx.calls["funds"]["acc_id"] == 42
 
 
 def test_get_funds_empty_returns_none():
-    assert trade.get_funds(_client(funds=pd.DataFrame()), "SIMULATE") is None
+    assert trade.get_funds(_client(funds=pd.DataFrame()), "SIMULATE", 42) is None
 
 
 def test_list_positions_maps_fields():
@@ -125,11 +133,13 @@ def test_list_positions_maps_fields():
             }
         ]
     )
-    position = trade.list_positions(_client(positions=positions), "SIMULATE")[0]
+    client = _client(positions=positions)
+    position = trade.list_positions(client, "SIMULATE", 42)[0]
     assert position.qty == 2.0
     assert position.cost_price is None
     assert position.average_cost == 6.5
     assert position.position_side == "LONG"
+    assert client.trade_ctx.calls["positions"]["acc_id"] == 42
 
 
 def test_list_orders_current_and_history():
@@ -156,9 +166,13 @@ def test_list_orders_current_and_history():
             }
         ]
     )
-    current = trade.list_orders(_client(orders=order), "SIMULATE")
+    current_client = _client(orders=order)
+    current = trade.list_orders(current_client, "SIMULATE", 42)
     assert current[0].order_id == "1001"
     assert current[0].trd_side == "BUY"
+    assert current_client.trade_ctx.calls["orders"]["acc_id"] == 42
 
-    history = trade.list_orders(_client(history=order), "SIMULATE", history=True)
+    history_client = _client(history=order)
+    history = trade.list_orders(history_client, "SIMULATE", 42, history=True)
     assert history[0].order_status == "SUBMITTED"
+    assert history_client.trade_ctx.calls["history"]["acc_id"] == 42
