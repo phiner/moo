@@ -82,3 +82,8 @@ a time. Contexts are always closed on shutdown.
 scripts/validate.sh                                   # ruff + mypy + pytest (non-live)
 uv run python -m pytest -m live                       # live tests (require OpenD)
 ```
+
+## Docs
+
+- [开发规格书 V1.0](docs/trading-system-spec-v1.md) — 目标交易系统的完整规格（草案）。
+- [可行性分析](docs/trading-system-feasibility.md) — 基于 moomoo API 能力与现有代码库的可行性评估。
