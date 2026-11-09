@@ -37,11 +37,35 @@ class UiConfig:
     default_group: str = ""
 
 
+def _default_db_path() -> Path:
+    base = Path(os.environ.get("MOOC_RUNTIME_DIR", "~/.mooc")).expanduser()
+    return base / "mooc.db"
+
+
+@dataclass(frozen=True)
+class StorageConfig:
+    path: Path = field(default_factory=_default_db_path)
+
+
+@dataclass(frozen=True)
+class DataQualityConfig:
+    """Freshness thresholds; a value older than these is flagged stale.
+
+    Defaults are conservative starting points and fully overridable — the spec
+    leaves the exact thresholds open (chapter 18).
+    """
+
+    realtime_max_age_sec: float = 60.0
+    delayed_max_age_sec: float = 900.0
+
+
 @dataclass(frozen=True)
 class AppConfig:
     opend: OpendConfig = field(default_factory=OpendConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     ui: UiConfig = field(default_factory=UiConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    data_quality: DataQualityConfig = field(default_factory=DataQualityConfig)
 
 
 def _env(name: str) -> str | None:
@@ -53,6 +77,13 @@ def _as_int(value: str | int, field_name: str) -> int:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise MoocError(f"invalid config: {field_name} must be an integer, got {value!r}") from exc
+
+
+def _as_float(value: str | float, field_name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise MoocError(f"invalid config: {field_name} must be a number, got {value!r}") from exc
 
 
 def _as_trd_env(value: object, field_name: str) -> str:
@@ -78,6 +109,8 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
     opend = raw.get("opend", {})
     trading = raw.get("trading", {})
     ui = raw.get("ui", {})
+    storage = raw.get("storage", {})
+    data_quality = raw.get("data_quality", {})
     allowed = trading.get("allowed_trd_envs", cfg.trading.allowed_trd_envs)
     return AppConfig(
         opend=replace(
@@ -103,6 +136,21 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
             market=str(ui.get("market", cfg.ui.market)).upper(),
             default_group=str(ui.get("default_group", cfg.ui.default_group)),
         ),
+        storage=replace(
+            cfg.storage,
+            path=Path(str(storage.get("path", cfg.storage.path))).expanduser(),
+        ),
+        data_quality=replace(
+            cfg.data_quality,
+            realtime_max_age_sec=_as_float(
+                data_quality.get("realtime_max_age_sec", cfg.data_quality.realtime_max_age_sec),
+                "data_quality.realtime_max_age_sec",
+            ),
+            delayed_max_age_sec=_as_float(
+                data_quality.get("delayed_max_age_sec", cfg.data_quality.delayed_max_age_sec),
+                "data_quality.delayed_max_age_sec",
+            ),
+        ),
     )
 
 
@@ -112,6 +160,7 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
     trd_env = _env("TRD_ENV")
     currency = _env("CURRENCY")
     default_group = _env("DEFAULT_GROUP")
+    db_path = _env("DB_PATH")
     return AppConfig(
         opend=replace(
             cfg.opend,
@@ -129,4 +178,9 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
             cfg.ui,
             default_group=default_group if default_group is not None else cfg.ui.default_group,
         ),
+        storage=replace(
+            cfg.storage,
+            path=Path(db_path).expanduser() if db_path else cfg.storage.path,
+        ),
+        data_quality=cfg.data_quality,
     )

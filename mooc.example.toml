@@ -14,3 +14,13 @@ default_currency = "USD"
 market = "US"
 # Default self-selected group shown in the TUI. Empty = first custom group.
 default_group = ""
+
+[storage]
+# SQLite database path. Defaults to <MOOC_RUNTIME_DIR>/mooc.db (~/.mooc/mooc.db).
+# path = "~/.mooc/mooc.db"
+
+[data_quality]
+# A quote older than these thresholds is flagged stale (chapter 18 leaves the
+# exact values open; these are conservative defaults).
+realtime_max_age_sec = 60
+delayed_max_age_sec = 900
