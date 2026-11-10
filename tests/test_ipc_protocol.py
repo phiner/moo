@@ -120,6 +120,62 @@ def test_watchlist_summary_validation(bad):
         protocol.GetWatchlistSummary(**bad)
 
 
+def test_market_requests_cover_all_kinds():
+    kinds = {model.model_fields["kind"].default for model in protocol.MARKET_REQUESTS}
+    assert kinds == {"GetStockSnapshot", "GetVolatility", "GetEvents"}
+
+
+def test_market_request_roundtrip_and_bounds():
+    req = protocol.GetStockSnapshot(codes=["US.AAPL", "US.MSFT"], request_id=9)
+    assert protocol.decode_request(protocol.encode(req)) == req
+
+    with pytest.raises(ValidationError):
+        protocol.GetStockSnapshot(codes=[])
+    with pytest.raises(ValidationError):
+        protocol.GetVolatility(code="US.AAPL", lookback=0)
+    with pytest.raises(ValidationError):
+        protocol.GetVolatility(code="US.AAPL", history_days=999)
+
+
+def test_market_response_roundtrip():
+    resp = protocol.StockSnapshotResult(
+        request_id=1,
+        quotes=[
+            protocol.StockSnapshotDTO(
+                code="US.AAPL",
+                last=275.0,
+                bid=274.9,
+                ask=275.1,
+                volume=10,
+                update_time="2026-11-06T20:00:00+00:00",
+                quality=protocol.QualityDTO(
+                    source="realtime",
+                    observed_at="2026-11-06T20:00:00+00:00",
+                    is_stale=False,
+                    missing_fields=[],
+                ),
+            )
+        ],
+    )
+    assert protocol.decode_response(protocol.encode(resp)) == resp
+
+    vol = protocol.VolatilityResult(
+        request_id=2,
+        item=protocol.VolatilityDTO(
+            code="US.AAPL",
+            iv=40.0,
+            hv=25.0,
+            iv_rank=100.0,
+            iv_percentile=50.0,
+            iv_hv_diff=15.0,
+            sample_size=2,
+            first_day="2026-11-05",
+            last_day="2026-11-06",
+        ),
+    )
+    assert protocol.decode_response(protocol.encode(vol)) == vol
+
+
 def test_watchlist_summary_response_roundtrip():
     resp = protocol.WatchlistSummaryResult(
         request_id=1,

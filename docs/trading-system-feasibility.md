@@ -176,9 +176,11 @@ tui/          # 新增 市场总览/标的分析/策略候选/持仓/日志 页�
 - **恢复 IV Rank / IV Percentile**：`get_option_underlying_rank` 直接返回 `iv_rank`/`iv_percentile`（含历史交易日）。
 
 **其他待确认（不阻塞 Phase 1–2）：**
-1. **VIX/指数**：`US.VIX` 等指数快照在本账户权限下是否可读。
+1. ~~**VIX/指数**：`US.VIX` 等指数快照是否可读。~~ **已实测（2026-11-09）：`probe snapshot US.VIX` 返回 `last=0.0`、无 bid/ask，指数/VIX 不能经快照读取。** 市场环境模块须改用替代指标（如 SPY/QQQ 趋势 + 波动率）或将 VIX 标为缺失。
 2. **行情权限**：当前账户的期权行情等级（决定可成交报价质量）。
 3. **规格书第 18 章 TBD 参数**：是否接受"先留空 + 可配置"。
+
+**Phase 1 实测记录（2026-11-09，OpenD 实时）：** `probe snapshot US.AAPL US.SPY` 正确将收盘后快照标为 `STALE`（`update_time` 美东→UTC）；`probe volatility US.AAPL` 返回 251 天 IV/HV，`iv_rank=45.0`、`iv_percentile=36.7`；`probe events` 返回按日期排序的财报事件。
 
 ---
 

@@ -13,15 +13,20 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from .config import load_config
 from .daemon.lifecycle import daemon_paths, is_running, socket_is_live
 from .domain.options import LegAction, OptionLeg
+from .opend import events as events_api
 from .opend import option, trade, watchlist
+from .opend import quote as quote_api
+from .opend import volatility as vol_api
 from .opend.client import OpendClient
 from .opend.errors import MoocError
 from .policy import resolve_trd_env
+from .services.volatility import summarize
 
 
 # -- shared ---------------------------------------------------------------
@@ -183,6 +188,102 @@ def _cmd_probe_watchlist(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- probe (market data, read-only, direct SDK) ---------------------------
+def _cmd_probe_snapshot(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    with _connected() as client:
+        snapshots = quote_api.stock_snapshot(
+            client,
+            args.codes,
+            now=datetime.now(UTC),
+            max_age_seconds=cfg.data_quality.realtime_max_age_sec,
+        )
+    if args.json:
+        payload = [
+            {
+                "code": q.code,
+                "last": q.last,
+                "bid": q.bid,
+                "ask": q.ask,
+                "volume": q.volume,
+                "update_time": q.update_time.isoformat() if q.update_time else None,
+                "source": q.quality.source.value,
+                "observed_at": q.quality.observed_at.isoformat(),
+                "is_stale": q.quality.is_stale,
+                "missing_fields": list(q.quality.missing_fields),
+            }
+            for q in snapshots.values()
+        ]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"snapshots: {len(snapshots)}")
+        for q in snapshots.values():
+            flag = "STALE" if q.quality.is_stale else q.quality.source.value
+            print(
+                f"  {q.code:<16} last={q.last} bid={q.bid} ask={q.ask} "
+                f"vol={q.volume} [{flag}] {q.quality.observed_at.isoformat()}"
+            )
+    return 0
+
+
+def _cmd_probe_volatility(args: argparse.Namespace) -> int:
+    end = date.today()
+    begin = end - timedelta(days=args.history_days)
+    with _connected() as client:
+        points = vol_api.his_volatility(
+            client, args.code, begin=begin.isoformat(), end=end.isoformat()
+        )
+    summary = summarize(points, lookback=args.lookback)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "code": args.code,
+                    "iv": summary.iv,
+                    "hv": summary.hv,
+                    "iv_rank": summary.iv_rank,
+                    "iv_percentile": summary.iv_percentile,
+                    "iv_hv_diff": summary.iv_hv_diff,
+                    "sample_size": len(points),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        print(f"{args.code} volatility ({len(points)} days, lookback {args.lookback})")
+        print(f"  iv / hv        : {summary.iv} / {summary.hv}")
+        print(f"  iv_rank        : {summary.iv_rank}")
+        print(f"  iv_percentile  : {summary.iv_percentile}")
+        print(f"  iv - hv        : {summary.iv_hv_diff}")
+    return 0
+
+
+def _cmd_probe_events(args: argparse.Namespace) -> int:
+    now = datetime.now(UTC)
+    begin = args.begin or date.today().isoformat()
+    end = args.end or (date.fromisoformat(begin) + timedelta(days=7)).isoformat()
+    with _connected() as client:
+        collected = events_api.earnings_calendar(
+            client, args.market, begin=begin, end=end, observed_at=now
+        )
+        if args.economic:
+            collected += events_api.economic_calendar(client, begin=begin, end=end, observed_at=now)
+    collected.sort(key=lambda event: event.event_datetime)
+    if args.json:
+        print(
+            json.dumps(
+                [asdict(event) for event in collected], ensure_ascii=False, indent=2, default=str
+            )
+        )
+    else:
+        print(f"events ({begin}..{end}): {len(collected)}")
+        for event in collected:
+            label = event.code or "-"
+            print(f"  {event.event_datetime.date()} {event.event_type.value:<9} {label}")
+    return 0
+
+
 # -- probe (trade, read-only, direct SDK) ---------------------------------
 def _cmd_probe_accounts(args: argparse.Namespace) -> int:
     cfg = load_config()
@@ -299,7 +400,7 @@ def _cmd_daemon_serve(_args: argparse.Namespace) -> int:
     client = OpendClient(host=cfg.opend.host, port=cfg.opend.port)
     try:
         client.connect()
-        asyncio.run(DaemonServer(paths, client, cfg.trading).serve_forever())
+        asyncio.run(DaemonServer(paths, client, cfg.trading, cfg).serve_forever())
     except (MoocError, RuntimeError) as exc:
         logger = logging.getLogger(__name__)
         logger.exception("daemon failed")
@@ -439,6 +540,26 @@ def build_parser() -> argparse.ArgumentParser:
     combo.add_argument("legs")
     combo.add_argument("--json", action="store_true")
     combo.set_defaults(func=_cmd_probe_combo)
+
+    snapshot = probe_sub.add_parser("snapshot", help="stock snapshots with freshness flags")
+    snapshot.add_argument("codes", nargs="+")
+    snapshot.add_argument("--json", action="store_true")
+    snapshot.set_defaults(func=_cmd_probe_snapshot)
+
+    vol = probe_sub.add_parser("volatility", help="IV/HV, IV Rank and IV Percentile")
+    vol.add_argument("code")
+    vol.add_argument("--history-days", type=_positive_int, default=364)
+    vol.add_argument("--lookback", type=_positive_int, default=252)
+    vol.add_argument("--json", action="store_true")
+    vol.set_defaults(func=_cmd_probe_volatility)
+
+    evts = probe_sub.add_parser("events", help="earnings (and optional economic) calendar")
+    evts.add_argument("--market", default="US")
+    evts.add_argument("--begin")
+    evts.add_argument("--end")
+    evts.add_argument("--economic", action="store_true", help="also include macro events")
+    evts.add_argument("--json", action="store_true")
+    evts.set_defaults(func=_cmd_probe_events)
 
     groups = probe_sub.add_parser("groups", help="list self-selected groups")
     groups.add_argument("--json", action="store_true")

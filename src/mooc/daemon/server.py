@@ -11,6 +11,7 @@ import signal
 from ..config import AppConfig, TradingConfig
 from ..ipc import protocol
 from ..opend.client import OpendClient
+from ..services.market_data import MarketDataService
 from ..services.option_data import OptionDataService
 from ..services.trade import TradeService
 from .lifecycle import (
@@ -21,6 +22,8 @@ from .lifecycle import (
 
 logger = logging.getLogger(__name__)
 
+_Service = TradeService | OptionDataService | MarketDataService
+
 
 class DaemonServer:
     def __init__(
@@ -28,11 +31,14 @@ class DaemonServer:
         paths: DaemonPaths,
         client: OpendClient,
         trading: TradingConfig | None = None,
+        config: AppConfig | None = None,
     ) -> None:
         self._paths = paths
         self._client = client
+        self._config = config or AppConfig()
         self._service = OptionDataService(client)
-        self._trade_service = TradeService(client, trading or AppConfig().trading)
+        self._trade_service = TradeService(client, trading or self._config.trading)
+        self._market_service = MarketDataService(client, self._config)
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -55,11 +61,13 @@ class DaemonServer:
                     await self._send(writer, protocol.ErrorResult(message=f"bad request: {exc}"))
                     continue
                 # SDK calls are blocking; keep the event loop responsive.
-                service = (
-                    self._trade_service
-                    if isinstance(request, protocol.TRADE_REQUESTS)
-                    else self._service
-                )
+                service: _Service
+                if isinstance(request, protocol.TRADE_REQUESTS):
+                    service = self._trade_service
+                elif isinstance(request, protocol.MARKET_REQUESTS):
+                    service = self._market_service
+                else:
+                    service = self._service
                 response = await asyncio.to_thread(service.dispatch, request)
                 await self._send(writer, response)
         except (ConnectionResetError, BrokenPipeError):

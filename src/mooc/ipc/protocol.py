@@ -48,6 +48,31 @@ class GetComboAnalysis(BaseModel):
     legs: list[Leg] = Field(min_length=1, max_length=MAX_LEGS)
 
 
+# -- market data requests (read-only, provenance-aware) ------------------
+class GetStockSnapshot(BaseModel):
+    kind: Literal["GetStockSnapshot"] = "GetStockSnapshot"
+    request_id: int | None = None
+    codes: list[str] = Field(min_length=1, max_length=50)
+
+
+class GetVolatility(BaseModel):
+    kind: Literal["GetVolatility"] = "GetVolatility"
+    request_id: int | None = None
+    code: str = Field(min_length=1)
+    history_days: int = Field(default=364, ge=1, le=364)
+    lookback: int = Field(default=252, ge=1, le=364)
+
+
+class GetEvents(BaseModel):
+    kind: Literal["GetEvents"] = "GetEvents"
+    request_id: int | None = None
+    market: str = "US"
+    begin: str | None = None
+    end: str | None = None
+    include_earnings: bool = True
+    include_economic: bool = False
+
+
 # -- watchlist requests (read-only) --------------------------------------
 class GetWatchlistGroups(BaseModel):
     kind: Literal["GetWatchlistGroups"] = "GetWatchlistGroups"
@@ -114,6 +139,9 @@ Request = Annotated[
     GetOptionExpirations
     | GetOptionChain
     | GetComboAnalysis
+    | GetStockSnapshot
+    | GetVolatility
+    | GetEvents
     | GetWatchlistGroups
     | GetWatchlistSummary
     | GetWatchlistMembers
@@ -127,6 +155,9 @@ Request = Annotated[
 
 # Request types handled by the trade service (routed separately by the daemon).
 TRADE_REQUESTS = (GetAccounts, GetFunds, GetPositions, GetOrders)
+
+# Request types handled by the market data service.
+MARKET_REQUESTS = (GetStockSnapshot, GetVolatility, GetEvents)
 
 
 # -- responses ------------------------------------------------------------
@@ -166,6 +197,63 @@ class ComboAnalysisResult(BaseModel):
     prob_profit: float
     delta: float
     theta: float
+
+
+# -- market data responses (read-only, provenance-aware) ------------------
+class QualityDTO(BaseModel):
+    source: str
+    observed_at: str
+    is_stale: bool
+    missing_fields: list[str]
+
+
+class StockSnapshotDTO(BaseModel):
+    code: str
+    last: float | None = None
+    bid: float | None = None
+    ask: float | None = None
+    volume: int | None = None
+    update_time: str | None = None
+    quality: QualityDTO
+
+
+class StockSnapshotResult(BaseModel):
+    kind: Literal["StockSnapshotResult"] = "StockSnapshotResult"
+    request_id: int | None = None
+    quotes: list[StockSnapshotDTO]
+
+
+class VolatilityDTO(BaseModel):
+    code: str
+    iv: float | None = None
+    hv: float | None = None
+    iv_rank: float | None = None
+    iv_percentile: float | None = None
+    iv_hv_diff: float | None = None
+    sample_size: int
+    first_day: str | None = None
+    last_day: str | None = None
+
+
+class VolatilityResult(BaseModel):
+    kind: Literal["VolatilityResult"] = "VolatilityResult"
+    request_id: int | None = None
+    item: VolatilityDTO | None
+
+
+class EventDTO(BaseModel):
+    event_type: str
+    event_datetime: str
+    code: str | None = None
+    status: str
+    source: str
+    payload: str
+
+
+class EventsResult(BaseModel):
+    kind: Literal["EventsResult"] = "EventsResult"
+    request_id: int | None = None
+    events: list[EventDTO]
 
 
 class ErrorResult(BaseModel):
@@ -325,6 +413,9 @@ Response = Annotated[
     OptionExpirationsResult
     | OptionChainResult
     | ComboAnalysisResult
+    | StockSnapshotResult
+    | VolatilityResult
+    | EventsResult
     | WatchlistGroupsResult
     | WatchlistSummaryResult
     | WatchlistMembersResult
