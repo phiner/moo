@@ -27,8 +27,11 @@ from .opend.client import OpendClient
 from .opend.errors import MoocError
 from .policy import resolve_trd_env
 from .services.analyze import analyze_symbol
+from .services.journal import report as journal_report
 from .services.rules import load_rules
 from .services.volatility import summarize
+from .storage import db as storage_db
+from .storage import repo as storage_repo
 
 
 # -- shared ---------------------------------------------------------------
@@ -316,6 +319,28 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_probe_journal(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    path = Path(args.db).expanduser() if args.db else cfg.storage.path
+    conn = storage_db.open_db(path)
+    try:
+        entries = storage_repo.journal_entries(conn, symbol=args.symbol)
+    finally:
+        conn.close()
+    perf = journal_report(entries)
+    if args.json:
+        print(json.dumps(asdict(perf), ensure_ascii=False, indent=2))
+    else:
+        print(f"journal ({path}): {perf.trades} closed trades")
+        print(f"  win rate     : {perf.win_rate}")
+        print(f"  profit factor: {perf.profit_factor}")
+        print(f"  expectancy   : {perf.expectancy}")
+        print(f"  max drawdown : {perf.max_drawdown}")
+        print(f"  return/risk  : {perf.return_on_risk}")
+        print(f"  avg hold (d) : {perf.average_holding_period_days}")
+    return 0
+
+
 # -- probe (trade, read-only, direct SDK) ---------------------------------
 def _cmd_probe_accounts(args: argparse.Namespace) -> int:
     cfg = load_config()
@@ -598,6 +623,12 @@ def build_parser() -> argparse.ArgumentParser:
     analysis.add_argument("--acc-id", type=_positive_int, help="account id for risk sizing")
     analysis.add_argument("--json", action="store_true")
     analysis.set_defaults(func=_cmd_probe_analyze)
+
+    journal = probe_sub.add_parser("journal", help="forward performance from the trade log")
+    journal.add_argument("--symbol")
+    journal.add_argument("--db", help="SQLite path (defaults to config storage.path)")
+    journal.add_argument("--json", action="store_true")
+    journal.set_defaults(func=_cmd_probe_journal)
 
     groups = probe_sub.add_parser("groups", help="list self-selected groups")
     groups.add_argument("--json", action="store_true")

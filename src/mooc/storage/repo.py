@@ -12,15 +12,23 @@ import sqlite3
 from datetime import date, datetime
 
 from ..domain.events import Event, EventType
+from ..domain.journal import Confirmation, TradeLogEntry
 from ..domain.market import DataSource, OptionSnapshot, QuoteQuality, StockQuote, to_utc
 from ..domain.options import OptionContract, OptionType
 
 __all__ = [
+    "add_confirmation",
+    "add_journal_entry",
+    "confirmations",
     "events",
     "insert_event",
+    "journal_entries",
     "latest_option_quote",
     "latest_stock_quote",
     "option_contracts",
+    "save_candidate",
+    "save_risk_snapshot",
+    "save_signal",
     "stock_quotes",
     "upsert_option_contract",
     "upsert_option_quote",
@@ -323,6 +331,144 @@ def events(
             code=row["code"],
             status=row["status"],
             source=DataSource(row["source"]),
+            payload=row["payload"],
+        )
+        for row in rows
+    ]
+
+
+# -- candidates / signals / risk snapshots --------------------------------
+def save_candidate(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    strategy: str,
+    status: str,
+    created_at: datetime,
+    payload: str = "{}",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO trade_candidates (symbol, strategy, status, payload, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (symbol, strategy, status, payload, _iso(created_at)),
+    )
+    conn.commit()
+
+
+def save_signal(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    strategy: str,
+    status: str,
+    created_at: datetime,
+    action: str = "",
+    payload: str = "{}",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO trade_signals (symbol, strategy, status, action, payload, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (symbol, strategy, status, action, payload, _iso(created_at)),
+    )
+    conn.commit()
+
+
+def save_risk_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    created_at: datetime,
+    payload: str = "{}",
+) -> None:
+    conn.execute(
+        "INSERT INTO risk_snapshots (symbol, payload, created_at) VALUES (?, ?, ?)",
+        (symbol, payload, _iso(created_at)),
+    )
+    conn.commit()
+
+
+# -- journal / confirmations ----------------------------------------------
+def add_journal_entry(
+    conn: sqlite3.Connection, entry: TradeLogEntry, *, created_at: datetime
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO trade_journal
+            (symbol, strategy, status, opened_at, closed_at, entry_credit, exit_cost,
+             max_loss, pnl, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entry.symbol,
+            entry.strategy,
+            entry.status,
+            _iso(entry.opened_at) if entry.opened_at else None,
+            _iso(entry.closed_at) if entry.closed_at else None,
+            entry.entry_credit,
+            entry.exit_cost,
+            entry.max_loss,
+            entry.pnl,
+            entry.notes,
+            _iso(created_at),
+        ),
+    )
+    conn.commit()
+
+
+def journal_entries(conn: sqlite3.Connection, *, symbol: str | None = None) -> list[TradeLogEntry]:
+    where = "WHERE symbol = ?" if symbol is not None else ""
+    params: list[object] = [symbol] if symbol is not None else []
+    rows = conn.execute(
+        f"SELECT * FROM trade_journal {where} ORDER BY created_at", params
+    ).fetchall()
+    return [
+        TradeLogEntry(
+            symbol=row["symbol"],
+            strategy=row["strategy"],
+            status=row["status"],
+            opened_at=_parse_dt(row["opened_at"]),
+            closed_at=_parse_dt(row["closed_at"]),
+            entry_credit=row["entry_credit"],
+            exit_cost=row["exit_cost"],
+            max_loss=row["max_loss"],
+            pnl=row["pnl"],
+            notes=row["notes"],
+        )
+        for row in rows
+    ]
+
+
+def add_confirmation(conn: sqlite3.Connection, confirmation: Confirmation) -> None:
+    conn.execute(
+        """
+        INSERT INTO confirmations (symbol, strategy, payload, confirmed_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            confirmation.symbol,
+            confirmation.strategy,
+            confirmation.payload,
+            _iso(confirmation.confirmed_at),
+        ),
+    )
+    conn.commit()
+
+
+def confirmations(conn: sqlite3.Connection, *, symbol: str | None = None) -> list[Confirmation]:
+    where = "WHERE symbol = ?" if symbol is not None else ""
+    params: list[object] = [symbol] if symbol is not None else []
+    rows = conn.execute(
+        f"SELECT * FROM confirmations {where} ORDER BY confirmed_at", params
+    ).fetchall()
+    return [
+        Confirmation(
+            symbol=row["symbol"],
+            strategy=row["strategy"],
+            confirmed_at=datetime.fromisoformat(row["confirmed_at"]),
             payload=row["payload"],
         )
         for row in rows

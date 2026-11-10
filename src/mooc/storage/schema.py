@@ -8,7 +8,7 @@ new migrations as those phases land.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -99,5 +99,71 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_events_time
         ON events (event_datetime)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_candidates (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol     TEXT NOT NULL,
+        strategy   TEXT NOT NULL,
+        status     TEXT NOT NULL,
+        payload    TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_candidates_symbol
+        ON trade_candidates (symbol, created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_signals (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol     TEXT NOT NULL,
+        strategy   TEXT NOT NULL,
+        status     TEXT NOT NULL,
+        action     TEXT NOT NULL DEFAULT '',
+        payload    TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_symbol
+        ON trade_signals (symbol, created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS risk_snapshots (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol     TEXT NOT NULL,
+        payload    TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_journal (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol        TEXT NOT NULL,
+        strategy      TEXT NOT NULL,
+        status        TEXT NOT NULL,
+        opened_at     TEXT,
+        closed_at     TEXT,
+        entry_credit  REAL,
+        exit_cost     REAL,
+        max_loss      REAL,
+        pnl           REAL,
+        notes         TEXT NOT NULL DEFAULT '',
+        created_at    TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_journal_symbol
+        ON trade_journal (symbol, created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS confirmations (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol       TEXT NOT NULL,
+        strategy     TEXT NOT NULL,
+        payload      TEXT NOT NULL DEFAULT '{}',
+        confirmed_at TEXT NOT NULL
+    )
     """,
 )

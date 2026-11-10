@@ -33,7 +33,14 @@ def test_migrate_is_idempotent_and_stamps_version(tmp_path):
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     }
     assert {"symbols", "stock_quotes", "option_contracts", "option_quotes", "events"} <= tables
-    assert db.schema_version(conn) == 1
+    assert {
+        "trade_candidates",
+        "trade_signals",
+        "risk_snapshots",
+        "trade_journal",
+        "confirmations",
+    } <= tables
+    assert db.schema_version(conn) == 2
 
 
 def test_stock_quote_roundtrip_and_order(tmp_path):
