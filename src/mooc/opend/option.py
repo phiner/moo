@@ -7,8 +7,9 @@ for combo pricing; never derive it from single-leg quotes.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 
+from ..domain.market import DataSource, OptionSnapshot, quality_for
 from ..domain.options import (
     ComboAnalysis,
     OptionChain,
@@ -19,6 +20,7 @@ from ..domain.options import (
 )
 from .client import OpendClient
 from .errors import OpendRejected
+from .quote import parse_update_time as _parse_update_time
 from .values import require_ok as _require_ok
 from .values import to_float as _num
 from .values import to_int as _int
@@ -105,6 +107,53 @@ def get_quote(client: OpendClient, legs: list[OptionLeg]) -> list[OptionQuote]:
             )
         )
     return quotes
+
+
+def snapshots(
+    client: OpendClient,
+    codes: list[str],
+    *,
+    now: datetime,
+    max_age_seconds: float,
+) -> dict[str, OptionSnapshot]:
+    """Return per-contract snapshots (bid/ask + Greeks) keyed by code.
+
+    ``get_market_snapshot`` carries option fields (delta/IV/OI) for many codes in
+    one call — unlike ``get_option_quote``, which caps combo legs at 4.
+    """
+    if not codes:
+        return {}
+    ret, data = client.quote_ctx.get_market_snapshot(codes)
+    _require_ok("get_market_snapshot", ret, data)
+    result: dict[str, OptionSnapshot] = {}
+    for _, row in data.iterrows():
+        code = str(row.get("code"))
+        update = _parse_update_time(row.get("update_time"))
+        missing = () if update is not None else ("update_time",)
+        result[code] = OptionSnapshot(
+            code=code,
+            underlying=str(row.get("stock_owner") or ""),
+            quality=quality_for(
+                DataSource.REALTIME,
+                update or now,
+                now=now,
+                max_age_seconds=max_age_seconds,
+                missing_fields=missing,
+            ),
+            last=_num(row.get("last_price")),
+            bid=_num(row.get("bid_price")),
+            ask=_num(row.get("ask_price")),
+            iv=_num(row.get("option_implied_volatility")),
+            delta=_num(row.get("option_delta")),
+            gamma=_num(row.get("option_gamma")),
+            theta=_num(row.get("option_theta")),
+            vega=_num(row.get("option_vega")),
+            rho=_num(row.get("option_rho")),
+            open_interest=_int(row.get("option_open_interest")),
+            volume=_int(row.get("volume")),
+            update_time=update,
+        )
+    return result
 
 
 def combo_analysis(client: OpendClient, legs: list[OptionLeg]) -> ComboAnalysis:

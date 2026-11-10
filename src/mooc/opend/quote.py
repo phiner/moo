@@ -20,7 +20,8 @@ _US_EASTERN = ZoneInfo("America/New_York")
 _UPDATE_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-def _update_time(value) -> datetime | None:
+def parse_update_time(value) -> datetime | None:
+    """Parse the vendor ``update_time`` (US/Eastern) into aware UTC, or ``None``."""
     if not value:
         return None
     try:
@@ -45,7 +46,7 @@ def stock_snapshot(
     quotes: dict[str, StockQuote] = {}
     for _, row in data.iterrows():
         code = str(row.get("code"))
-        update = _update_time(row.get("update_time"))
+        update = parse_update_time(row.get("update_time"))
         missing = () if update is not None else ("update_time",)
         quotes[code] = StockQuote(
             code=code,
