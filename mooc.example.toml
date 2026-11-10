@@ -23,6 +23,12 @@ default_group = ""
 # Directory (or file) of strategy rule YAML files (spec ch. 14).
 # path = "rules"
 
+[risk]
+# Drawdown response policy (never a hard liquidation). Action is one of
+# alert_only | reduce_risk | stop_new.
+drawdown_threshold_pct = 3.0
+drawdown_action = "alert_only"
+
 [data_quality]
 # A quote older than these thresholds is flagged stale (chapter 18 leaves the
 # exact values open; these are conservative defaults).

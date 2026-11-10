@@ -23,7 +23,7 @@ from ..opend import option as option_api
 from ..opend import quote as quote_api
 from ..opend import volatility as vol_api
 from ..opend.client import OpendClient
-from . import decision, pricing, scanner, selector
+from . import decision, pricing, risk, scanner, selector
 
 __all__ = ["analyze_symbol"]
 
@@ -153,6 +153,7 @@ def analyze_symbol(
     rules: Sequence[StrategyRule],
     config: AppConfig,
     now: datetime | None = None,
+    account_equity: float | None = None,
 ) -> DecisionOutput:
     """Analyze ``symbol`` and return a 14.1 decision output."""
     now = now or datetime.now(UTC)
@@ -227,6 +228,11 @@ def analyze_symbol(
     if output.trade_status is TradeStatus.CANDIDATE and selection is not None:
         priced = _priced(rule.name, selection)
         if priced is not None:
+            trade_risk = risk.assess_trade(
+                max_loss_per_contract=priced.max_loss or 0.0,
+                account_equity=account_equity,
+                max_account_risk_pct=_number(rule.max_account_risk_pct),
+            )
             output = replace(
                 output,
                 strategy={
@@ -238,6 +244,14 @@ def analyze_symbol(
                     "max_profit": priced.max_profit,
                     "max_loss": priced.max_loss,
                     "breakeven": priced.breakeven,
+                },
+                risk={
+                    "max_account_risk_pct": _number(rule.max_account_risk_pct),
+                    "max_loss_per_contract": priced.max_loss,
+                    "allowed_risk": trade_risk.allowed_risk,
+                    "recommended_contracts": trade_risk.recommended_contracts,
+                    "portfolio_risk_passed": trade_risk.passed,
+                    "reasons": list(trade_risk.reasons),
                 },
             )
     return replace(

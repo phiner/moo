@@ -290,7 +290,15 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
     cfg = load_config()
     loaded = load_rules(cfg.rules.path)
     with _connected() as client:
-        output = analyze_symbol(client, args.code, rules=loaded, config=cfg)
+        equity = None
+        if args.acc_id:
+            trd_env = resolve_trd_env(None, cfg.trading)
+            funds = trade.get_funds(
+                client, trd_env, args.acc_id, currency=cfg.trading.default_currency
+            )
+            if funds is not None:
+                equity = funds.total_assets
+        output = analyze_symbol(client, args.code, rules=loaded, config=cfg, account_equity=equity)
     if args.json:
         print(json.dumps(output.to_dict(), ensure_ascii=False, indent=2))
     else:
@@ -587,6 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analysis = probe_sub.add_parser("analyze", help="full analysis (14.1 output) for a symbol")
     analysis.add_argument("code")
+    analysis.add_argument("--acc-id", type=_positive_int, help="account id for risk sizing")
     analysis.add_argument("--json", action="store_true")
     analysis.set_defaults(func=_cmd_probe_analyze)
 

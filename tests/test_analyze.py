@@ -132,6 +132,7 @@ def _rule(**overrides) -> StrategyRule:
         "delta_max": 0.25,
         "min_width": 5,
         "max_width": 5,
+        "max_account_risk_pct": 0.25,
     }
     base.update(overrides)
     return StrategyRule(**base)
@@ -159,6 +160,32 @@ def test_analyze_selects_spread_and_fills_strategy_block():
     # short bid 2.00 - long ask 1.10 = 0.90/share -> 90.0 per contract
     assert strategy["net_credit"] == pytest.approx(90.0)
     assert strategy["max_loss"] == pytest.approx(410.0)
+
+
+def test_analyze_fills_risk_block_with_equity():
+    output = analyze_symbol(
+        _Client(with_chain=True),
+        "US.AAPL",
+        rules=[_rule()],
+        config=AppConfig(),
+        now=NOW,
+        account_equity=10000.0,
+    )
+    assert output.trade_status is TradeStatus.CANDIDATE
+    risk_block = output.risk
+    assert risk_block["max_loss_per_contract"] == pytest.approx(410.0)
+    assert risk_block["allowed_risk"] == pytest.approx(2500.0)  # 0.25 * 10000
+    assert risk_block["recommended_contracts"] == 6  # floor(2500 / 410)
+    assert risk_block["portfolio_risk_passed"] is True
+
+
+def test_analyze_without_equity_does_not_pass_risk():
+    output = analyze_symbol(
+        _Client(with_chain=True), "US.AAPL", rules=[_rule()], config=AppConfig(), now=NOW
+    )
+    assert output.trade_status is TradeStatus.CANDIDATE
+    assert output.risk["portfolio_risk_passed"] is False
+    assert output.risk["recommended_contracts"] is None
 
 
 def test_analyze_without_rules_is_no_trade():

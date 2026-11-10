@@ -11,6 +11,7 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from .domain.risk import DRAWDOWN_ACTIONS
 from .opend.errors import MoocError
 
 DEFAULT_CONFIG_PATH = Path("mooc.toml")
@@ -67,6 +68,14 @@ class RulesConfig:
 
 
 @dataclass(frozen=True)
+class RiskConfig:
+    """Drawdown response policy; never a hard liquidation (spec ch. 18 / R7)."""
+
+    drawdown_threshold_pct: float = 3.0
+    drawdown_action: str = "alert_only"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     opend: OpendConfig = field(default_factory=OpendConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
@@ -74,6 +83,7 @@ class AppConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     data_quality: DataQualityConfig = field(default_factory=DataQualityConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
 
 
 def _env(name: str) -> str | None:
@@ -92,6 +102,16 @@ def _as_float(value: str | float, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise MoocError(f"invalid config: {field_name} must be a number, got {value!r}") from exc
+
+
+def _as_drawdown_action(value: object) -> str:
+    action = str(value)
+    if action not in DRAWDOWN_ACTIONS:
+        raise MoocError(
+            f"invalid config: risk.drawdown_action must be one of {list(DRAWDOWN_ACTIONS)}, "
+            f"got {value!r}"
+        )
+    return action
 
 
 def _as_trd_env(value: object, field_name: str) -> str:
@@ -120,6 +140,7 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
     storage = raw.get("storage", {})
     data_quality = raw.get("data_quality", {})
     rules = raw.get("rules", {})
+    risk = raw.get("risk", {})
     allowed = trading.get("allowed_trd_envs", cfg.trading.allowed_trd_envs)
     return AppConfig(
         opend=replace(
@@ -164,6 +185,16 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
             cfg.rules,
             path=Path(str(rules.get("path", cfg.rules.path))).expanduser(),
         ),
+        risk=replace(
+            cfg.risk,
+            drawdown_threshold_pct=_as_float(
+                risk.get("drawdown_threshold_pct", cfg.risk.drawdown_threshold_pct),
+                "risk.drawdown_threshold_pct",
+            ),
+            drawdown_action=_as_drawdown_action(
+                risk.get("drawdown_action", cfg.risk.drawdown_action)
+            ),
+        ),
     )
 
 
@@ -201,4 +232,5 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
             cfg.rules,
             path=Path(rules_path).expanduser() if rules_path else cfg.rules.path,
         ),
+        risk=cfg.risk,
     )

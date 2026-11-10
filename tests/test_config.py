@@ -97,6 +97,24 @@ def test_invalid_trd_env_raises(tmp_path: Path):
         load_config(cfg_file)
 
 
+def test_risk_defaults_and_validation(tmp_path: Path):
+    defaults = load_config(tmp_path / "missing.toml")
+    assert defaults.risk.drawdown_action == "alert_only"
+    assert defaults.risk.drawdown_threshold_pct == 3.0
+
+    cfg_file = tmp_path / "mooc.toml"
+    cfg_file.write_text('[risk]\ndrawdown_action = "liquidate"\n')
+    with pytest.raises(MoocError):
+        load_config(cfg_file)
+
+
+def test_rules_path_from_toml(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MOOC_RULES_PATH", raising=False)
+    cfg_file = tmp_path / "mooc.toml"
+    cfg_file.write_text("[rules]\npath = '~/myrules'\n")
+    assert load_config(cfg_file).rules.path == Path("~/myrules").expanduser()
+
+
 def test_appconfig_is_frozen():
     cfg = AppConfig()
     assert cfg.opend.port == 11111
