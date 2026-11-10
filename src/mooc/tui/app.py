@@ -99,7 +99,10 @@ class MoocApp(App):
             "account": 0,
             "orders": 0,
             "combo": 0,
+            "analysis": 0,
+            "journal": 0,
         }
+        self._analysis_symbol = "US.AAPL"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -132,6 +135,17 @@ class MoocApp(App):
             with TabPane("Orders", id="tab-orders"):
                 yield Label("loading…", id="orders-title")
                 yield DataTable(id="orders")
+            with TabPane("Analysis", id="tab-analysis"):
+                yield Input(
+                    value=self._analysis_symbol,
+                    placeholder="symbol, e.g. US.AAPL",
+                    id="analysis-symbol",
+                )
+                yield Static(
+                    "Enter a symbol and press Enter for the analysis.", id="analysis-result"
+                )
+            with TabPane("Journal", id="tab-journal"):
+                yield Static("loading…", id="journal-result")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -147,6 +161,7 @@ class MoocApp(App):
         )
         self._load_groups()
         self._load_accounts()
+        self._load_journal()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "underlying":
@@ -154,6 +169,9 @@ class MoocApp(App):
             self._load_chain()
         elif event.input.id == "legs":
             self._load_combo(event.value.strip())
+        elif event.input.id == "analysis-symbol":
+            self._analysis_symbol = event.value.strip() or self._analysis_symbol
+            self._load_analysis()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "account-select":
@@ -183,6 +201,7 @@ class MoocApp(App):
     def action_reload(self) -> None:
         self._load_groups()
         self._load_accounts()
+        self._load_journal()
 
     def _next_generation(self, group: str) -> int:
         self._request_generations[group] += 1
@@ -534,6 +553,84 @@ class MoocApp(App):
 
     def _show_combo(self, text: str) -> None:
         self.query_one("#combo-result", Static).update(text)
+
+    # -- analysis ----------------------------------------------------------
+    def _load_analysis(self) -> None:
+        generation = self._next_generation("analysis")
+        self._load_analysis_worker(self._analysis_symbol, generation)
+
+    @work(group="analysis", exclusive=True, thread=True)
+    def _load_analysis_worker(self, symbol: str, generation: int) -> None:
+        try:
+            response = self._ipc.request(protocol.GetAnalysis(code=symbol), timeout=120.0)
+            if response.kind != "AnalysisResult":
+                raise MoocError(getattr(response, "message", "unexpected response"))
+            output = response.output
+            strategy = output.get("strategy") or {}
+            risk = output.get("risk") or {}
+            lines = [
+                f"{output.get('symbol')} @ {output.get('analysis_timestamp')}",
+                f"  data_quality     : {output.get('data_quality')}",
+                f"  market_regime    : {output.get('market_regime')}",
+                f"  volatility_regime: {output.get('volatility_regime')}",
+                f"  event_risk       : {output.get('event_risk')}",
+                f"  action           : {output.get('recommended_action')}",
+                f"  trade_status     : {output.get('trade_status')}",
+                (
+                    f"  strategy         : {strategy.get('type')} {strategy.get('expiration')} "
+                    f"{strategy.get('short_strike')}/{strategy.get('long_strike')}"
+                ),
+                f"  net credit       : {strategy.get('net_credit')}",
+                f"  max loss         : {strategy.get('max_loss')}",
+                (
+                    f"  contracts        : {risk.get('recommended_contracts')} "
+                    f"(risk passed: {risk.get('portfolio_risk_passed')})"
+                ),
+            ]
+            reasons = output.get("rejection_reasons") or []
+            if reasons:
+                lines.append("  rejection_reasons:")
+                lines.extend(f"    - {reason}" for reason in reasons)
+            missing = output.get("missing_data") or []
+            if missing:
+                lines.append(f"  missing_data     : {', '.join(missing)}")
+            text = "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 - report any failure in the UI
+            text = f"error: {exc}"
+        self._show_if_current("analysis", generation, self._show_analysis, text)
+
+    def _show_analysis(self, text: str) -> None:
+        self.query_one("#analysis-result", Static).update(text)
+
+    # -- journal -----------------------------------------------------------
+    def _load_journal(self) -> None:
+        generation = self._next_generation("journal")
+        self._load_journal_worker(generation)
+
+    @work(group="journal", exclusive=True, thread=True)
+    def _load_journal_worker(self, generation: int) -> None:
+        try:
+            response = self._ipc.request(protocol.GetJournal())
+            if response.kind != "JournalResult":
+                raise MoocError(getattr(response, "message", "unexpected response"))
+            report = response.report
+            text = "\n".join(
+                [
+                    f"closed trades : {report.get('trades')}",
+                    f"win rate      : {report.get('win_rate')}",
+                    f"profit factor : {report.get('profit_factor')}",
+                    f"expectancy    : {report.get('expectancy')}",
+                    f"max drawdown  : {report.get('max_drawdown')}",
+                    f"return on risk: {report.get('return_on_risk')}",
+                    f"avg hold (d)  : {report.get('average_holding_period_days')}",
+                ]
+            )
+        except Exception as exc:  # noqa: BLE001 - report any failure in the UI
+            text = f"error: {exc}"
+        self._show_if_current("journal", generation, self._show_journal, text)
+
+    def _show_journal(self, text: str) -> None:
+        self.query_one("#journal-result", Static).update(text)
 
 
 def run(socket_path: Path, default_group: str = "") -> None:

@@ -8,6 +8,7 @@ can tell stale/missing data from fresh. SDK calls are serialized through a lock
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 from datetime import UTC, date, datetime, timedelta
@@ -22,7 +23,10 @@ from ..opend import quote as quote_api
 from ..opend import volatility as vol_api
 from ..opend.client import OpendClient
 from ..opend.errors import MoocError
+from ..storage import db as storage_db
+from ..storage import repo as storage_repo
 from .analyze import analyze_symbol
+from .journal import report as journal_report
 from .rules import load_rules
 from .volatility import summarize
 
@@ -66,6 +70,8 @@ class MarketDataService:
             return self._events(request)
         if isinstance(request, protocol.GetAnalysis):
             return self._analysis(request)
+        if isinstance(request, protocol.GetJournal):
+            return self._journal(request)
         return protocol.ErrorResult(request_id=request_id, message="unknown market request kind")
 
     # -- handlers ----------------------------------------------------------
@@ -131,6 +137,17 @@ class MarketDataService:
             config=self._config,
         )
         return protocol.AnalysisResult(request_id=request.request_id, output=output.to_dict())
+
+    def _journal(self, request: protocol.GetJournal) -> protocol.Response:
+        conn = storage_db.open_db(self._config.storage.path)
+        try:
+            entries = storage_repo.journal_entries(conn, symbol=request.symbol)
+        finally:
+            conn.close()
+        return protocol.JournalResult(
+            request_id=request.request_id,
+            report=dataclasses.asdict(journal_report(entries)),
+        )
 
 
 def _snapshot_dto(quote: StockQuote) -> protocol.StockSnapshotDTO:

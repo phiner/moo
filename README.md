@@ -18,6 +18,8 @@ Daemon-mediated: `OpenD <- moomoo-api (SDK) -> daemon <- typed IPC (unix socket)
 - [x] S1 options data: expirations/chain/combo (SDK + IPC + daemon) + TUI (Chain + Strategy tabs)
 - [x] Watchlist: self-selected groups -> multi-symbol ATM option summary (read-only) + TUI (Watchlist tab)
 - [x] S2 trade (read-only): accounts/funds/positions/orders (SDK + IPC + daemon) + TUI (Account + Orders tabs)
+- [x] Analysis: scanner + YAML rules + decision output (14.1/14.2) + risk sizing + TUI (Analysis + Journal tabs)
+- [x] Storage: SQLite (quotes/contracts/events/candidates/signals/journal) + forward performance
 - [ ] S3 trade (simulated orders)
 - [ ] S4 screeners / ranks / events
 
@@ -38,7 +40,8 @@ uv run mooc probe combo '[{"code":"US.AAPL261118C270000","action":"BUY","quantit
 uv run mooc probe snapshot US.AAPL US.SPY         # snapshots + freshness flags
 uv run mooc probe volatility US.AAPL              # IV/HV, IV Rank, IV Percentile
 uv run mooc probe events [--begin D] [--end D]    # earnings calendar
-uv run mooc probe analyze US.AAPL                 # full analysis (spec 14.1 output)
+uv run mooc probe analyze US.AAPL [--acc-id N]    # full analysis (spec 14.1 output)
+uv run mooc probe journal [--symbol US.AAPL]      # forward performance from the trade log
 
 uv run mooc probe groups                          # self-selected groups
 uv run mooc probe watchlist "My Group" [--limit 30]  # ATM option summary per underlying
@@ -51,7 +54,7 @@ uv run mooc probe orders --acc-id 123 [--history] [--status FILLED_ALL]
 uv run mooc daemon run                    # start daemon in the background
 uv run mooc daemon status
 uv run mooc daemon stop
-uv run mooc tui                           # Textual client (Watchlist + Chain + Strategy + Account + Orders)
+uv run mooc tui                           # Textual client (Watchlist + Chain + Strategy + Account + Orders + Analysis + Journal)
 ```
 
 The TUI opens on the **Watchlist** tab: pick a self-selected group and see a

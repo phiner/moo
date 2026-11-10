@@ -79,6 +79,12 @@ class GetAnalysis(BaseModel):
     code: str = Field(min_length=1)
 
 
+class GetJournal(BaseModel):
+    kind: Literal["GetJournal"] = "GetJournal"
+    request_id: int | None = None
+    symbol: str | None = None
+
+
 # -- watchlist requests (read-only) --------------------------------------
 class GetWatchlistGroups(BaseModel):
     kind: Literal["GetWatchlistGroups"] = "GetWatchlistGroups"
@@ -149,6 +155,7 @@ Request = Annotated[
     | GetVolatility
     | GetEvents
     | GetAnalysis
+    | GetJournal
     | GetWatchlistGroups
     | GetWatchlistSummary
     | GetWatchlistMembers
@@ -164,7 +171,7 @@ Request = Annotated[
 TRADE_REQUESTS = (GetAccounts, GetFunds, GetPositions, GetOrders)
 
 # Request types handled by the market data service.
-MARKET_REQUESTS = (GetStockSnapshot, GetVolatility, GetEvents, GetAnalysis)
+MARKET_REQUESTS = (GetStockSnapshot, GetVolatility, GetEvents, GetAnalysis, GetJournal)
 
 
 # -- responses ------------------------------------------------------------
@@ -267,6 +274,12 @@ class AnalysisResult(BaseModel):
     kind: Literal["AnalysisResult"] = "AnalysisResult"
     request_id: int | None = None
     output: dict
+
+
+class JournalResult(BaseModel):
+    kind: Literal["JournalResult"] = "JournalResult"
+    request_id: int | None = None
+    report: dict
 
 
 class ErrorResult(BaseModel):
@@ -430,6 +443,7 @@ Response = Annotated[
     | VolatilityResult
     | EventsResult
     | AnalysisResult
+    | JournalResult
     | WatchlistGroupsResult
     | WatchlistSummaryResult
     | WatchlistMembersResult

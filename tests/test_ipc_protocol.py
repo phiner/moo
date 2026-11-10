@@ -122,7 +122,21 @@ def test_watchlist_summary_validation(bad):
 
 def test_market_requests_cover_all_kinds():
     kinds = {model.model_fields["kind"].default for model in protocol.MARKET_REQUESTS}
-    assert kinds == {"GetStockSnapshot", "GetVolatility", "GetEvents", "GetAnalysis"}
+    assert kinds == {
+        "GetStockSnapshot",
+        "GetVolatility",
+        "GetEvents",
+        "GetAnalysis",
+        "GetJournal",
+    }
+
+
+def test_journal_roundtrip():
+    req = protocol.GetJournal(symbol="US.AAPL", request_id=12)
+    assert protocol.decode_request(protocol.encode(req)) == req
+
+    resp = protocol.JournalResult(request_id=12, report={"trades": 0, "win_rate": None})
+    assert protocol.decode_response(protocol.encode(resp)) == resp
 
 
 def test_analysis_roundtrip():
