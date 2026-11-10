@@ -8,19 +8,25 @@ can tell stale/missing data from fresh. SDK calls are serialized through a lock
 
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import UTC, date, datetime, timedelta
 
 from ..config import AppConfig
 from ..domain.events import Event
 from ..domain.market import StockQuote
+from ..domain.rules import StrategyRule
 from ..ipc import protocol
 from ..opend import events as events_api
 from ..opend import quote as quote_api
 from ..opend import volatility as vol_api
 from ..opend.client import OpendClient
 from ..opend.errors import MoocError
+from .analyze import analyze_symbol
+from .rules import load_rules
 from .volatility import summarize
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_EVENT_WINDOW_DAYS = 7
 
@@ -30,6 +36,14 @@ class MarketDataService:
         self._client = client
         self._config = config or AppConfig()
         self._lock = threading.Lock()
+        self._rules = self._load_rules()
+
+    def _load_rules(self) -> list[StrategyRule]:
+        try:
+            return load_rules(self._config.rules.path)
+        except MoocError as exc:
+            logger.warning("no strategy rules loaded: %s", exc)
+            return []
 
     # -- request dispatch --------------------------------------------------
     def dispatch(self, request) -> protocol.Response:
@@ -50,6 +64,8 @@ class MarketDataService:
             return self._volatility(request)
         if isinstance(request, protocol.GetEvents):
             return self._events(request)
+        if isinstance(request, protocol.GetAnalysis):
+            return self._analysis(request)
         return protocol.ErrorResult(request_id=request_id, message="unknown market request kind")
 
     # -- handlers ----------------------------------------------------------
@@ -106,6 +122,15 @@ class MarketDataService:
             request_id=request.request_id,
             events=[_event_dto(event) for event in collected],
         )
+
+    def _analysis(self, request: protocol.GetAnalysis) -> protocol.Response:
+        output = analyze_symbol(
+            self._client,
+            request.code,
+            rules=self._rules,
+            config=self._config,
+        )
+        return protocol.AnalysisResult(request_id=request.request_id, output=output.to_dict())
 
 
 def _snapshot_dto(quote: StockQuote) -> protocol.StockSnapshotDTO:

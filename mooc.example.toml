@@ -19,6 +19,10 @@ default_group = ""
 # SQLite database path. Defaults to <MOOC_RUNTIME_DIR>/mooc.db (~/.mooc/mooc.db).
 # path = "~/.mooc/mooc.db"
 
+[rules]
+# Directory (or file) of strategy rule YAML files (spec ch. 14).
+# path = "rules"
+
 [data_quality]
 # A quote older than these thresholds is flagged stale (chapter 18 leaves the
 # exact values open; these are conservative defaults).

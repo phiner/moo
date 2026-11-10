@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 
 __all__ = [
+    "Bar",
     "DataSource",
     "OptionSnapshot",
     "QuoteQuality",
@@ -85,6 +86,18 @@ class StockQuote:
     ask: float | None = None
     volume: int | None = None
     update_time: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Bar:
+    """One daily OHLCV bar (from ``request_history_kline``)."""
+
+    day: date
+    close: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: int | None = None
 
 
 @dataclass(frozen=True)

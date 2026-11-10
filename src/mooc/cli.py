@@ -26,6 +26,8 @@ from .opend import volatility as vol_api
 from .opend.client import OpendClient
 from .opend.errors import MoocError
 from .policy import resolve_trd_env
+from .services.analyze import analyze_symbol
+from .services.rules import load_rules
 from .services.volatility import summarize
 
 
@@ -281,6 +283,28 @@ def _cmd_probe_events(args: argparse.Namespace) -> int:
         for event in collected:
             label = event.code or "-"
             print(f"  {event.event_datetime.date()} {event.event_type.value:<9} {label}")
+    return 0
+
+
+def _cmd_probe_analyze(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    loaded = load_rules(cfg.rules.path)
+    with _connected() as client:
+        output = analyze_symbol(client, args.code, rules=loaded, config=cfg)
+    if args.json:
+        print(json.dumps(output.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(f"{output.symbol} analysis @ {output.analysis_timestamp}")
+        print(f"  data_quality     : {output.data_quality}")
+        print(f"  market_regime    : {output.market_regime}")
+        print(f"  volatility_regime: {output.volatility_regime}")
+        print(f"  event_risk       : {output.event_risk}")
+        print(f"  action           : {output.recommended_action}")
+        print(f"  trade_status     : {output.trade_status.value}")
+        if output.rejection_reasons:
+            print("  rejection_reasons:")
+            for reason in output.rejection_reasons:
+                print(f"    - {reason}")
     return 0
 
 
@@ -560,6 +584,11 @@ def build_parser() -> argparse.ArgumentParser:
     evts.add_argument("--economic", action="store_true", help="also include macro events")
     evts.add_argument("--json", action="store_true")
     evts.set_defaults(func=_cmd_probe_events)
+
+    analysis = probe_sub.add_parser("analyze", help="full analysis (14.1 output) for a symbol")
+    analysis.add_argument("code")
+    analysis.add_argument("--json", action="store_true")
+    analysis.set_defaults(func=_cmd_probe_analyze)
 
     groups = probe_sub.add_parser("groups", help="list self-selected groups")
     groups.add_argument("--json", action="store_true")

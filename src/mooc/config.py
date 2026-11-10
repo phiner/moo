@@ -60,12 +60,20 @@ class DataQualityConfig:
 
 
 @dataclass(frozen=True)
+class RulesConfig:
+    """Directory of strategy rule files (spec ch. 14)."""
+
+    path: Path = Path("rules")
+
+
+@dataclass(frozen=True)
 class AppConfig:
     opend: OpendConfig = field(default_factory=OpendConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     ui: UiConfig = field(default_factory=UiConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     data_quality: DataQualityConfig = field(default_factory=DataQualityConfig)
+    rules: RulesConfig = field(default_factory=RulesConfig)
 
 
 def _env(name: str) -> str | None:
@@ -111,6 +119,7 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
     ui = raw.get("ui", {})
     storage = raw.get("storage", {})
     data_quality = raw.get("data_quality", {})
+    rules = raw.get("rules", {})
     allowed = trading.get("allowed_trd_envs", cfg.trading.allowed_trd_envs)
     return AppConfig(
         opend=replace(
@@ -151,6 +160,10 @@ def _from_toml(cfg: AppConfig, raw: dict) -> AppConfig:
                 "data_quality.delayed_max_age_sec",
             ),
         ),
+        rules=replace(
+            cfg.rules,
+            path=Path(str(rules.get("path", cfg.rules.path))).expanduser(),
+        ),
     )
 
 
@@ -161,6 +174,7 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
     currency = _env("CURRENCY")
     default_group = _env("DEFAULT_GROUP")
     db_path = _env("DB_PATH")
+    rules_path = _env("RULES_PATH")
     return AppConfig(
         opend=replace(
             cfg.opend,
@@ -183,4 +197,8 @@ def _apply_env(cfg: AppConfig) -> AppConfig:
             path=Path(db_path).expanduser() if db_path else cfg.storage.path,
         ),
         data_quality=cfg.data_quality,
+        rules=replace(
+            cfg.rules,
+            path=Path(rules_path).expanduser() if rules_path else cfg.rules.path,
+        ),
     )

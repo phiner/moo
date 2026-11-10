@@ -73,6 +73,12 @@ class GetEvents(BaseModel):
     include_economic: bool = False
 
 
+class GetAnalysis(BaseModel):
+    kind: Literal["GetAnalysis"] = "GetAnalysis"
+    request_id: int | None = None
+    code: str = Field(min_length=1)
+
+
 # -- watchlist requests (read-only) --------------------------------------
 class GetWatchlistGroups(BaseModel):
     kind: Literal["GetWatchlistGroups"] = "GetWatchlistGroups"
@@ -142,6 +148,7 @@ Request = Annotated[
     | GetStockSnapshot
     | GetVolatility
     | GetEvents
+    | GetAnalysis
     | GetWatchlistGroups
     | GetWatchlistSummary
     | GetWatchlistMembers
@@ -157,7 +164,7 @@ Request = Annotated[
 TRADE_REQUESTS = (GetAccounts, GetFunds, GetPositions, GetOrders)
 
 # Request types handled by the market data service.
-MARKET_REQUESTS = (GetStockSnapshot, GetVolatility, GetEvents)
+MARKET_REQUESTS = (GetStockSnapshot, GetVolatility, GetEvents, GetAnalysis)
 
 
 # -- responses ------------------------------------------------------------
@@ -254,6 +261,12 @@ class EventsResult(BaseModel):
     kind: Literal["EventsResult"] = "EventsResult"
     request_id: int | None = None
     events: list[EventDTO]
+
+
+class AnalysisResult(BaseModel):
+    kind: Literal["AnalysisResult"] = "AnalysisResult"
+    request_id: int | None = None
+    output: dict
 
 
 class ErrorResult(BaseModel):
@@ -416,6 +429,7 @@ Response = Annotated[
     | StockSnapshotResult
     | VolatilityResult
     | EventsResult
+    | AnalysisResult
     | WatchlistGroupsResult
     | WatchlistSummaryResult
     | WatchlistMembersResult

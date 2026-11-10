@@ -35,6 +35,11 @@ uv run mooc probe expirations US.AAPL     # list expirations (direct SDK)
 uv run mooc probe chain US.AAPL --start 2026-11-18 --end 2026-11-18
 uv run mooc probe combo '[{"code":"US.AAPL261118C270000","action":"BUY","quantity":1}]'
 
+uv run mooc probe snapshot US.AAPL US.SPY         # snapshots + freshness flags
+uv run mooc probe volatility US.AAPL              # IV/HV, IV Rank, IV Percentile
+uv run mooc probe events [--begin D] [--end D]    # earnings calendar
+uv run mooc probe analyze US.AAPL                 # full analysis (spec 14.1 output)
+
 uv run mooc probe groups                          # self-selected groups
 uv run mooc probe watchlist "My Group" [--limit 30]  # ATM option summary per underlying
 
