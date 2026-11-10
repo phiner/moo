@@ -1,0 +1,35 @@
+# Example strategy rule (spec ch. 14). Present-but-null fields are "undetermined":
+# the engine must NOT invent values, so the strategy yields NO TRADE until set.
+strategy:
+  name: bull_put_credit_spread
+  enabled: true
+
+  market_conditions:
+    allowed_regimes:
+      - bullish
+      - strong_bullish
+
+  volatility:
+    iv_rank_min: null
+    iv_rank_max: null
+    iv_percentile_min: null
+
+  expiration:
+    min_dte: 30
+    max_dte: 45
+
+  short_leg:
+    delta_min: 0.15
+    delta_max: 0.25
+
+  spread:
+    min_width: 2
+    max_width: 5
+
+  exit:
+    take_profit_pct: 0.50
+    stop_review_multiple: 2.0
+    time_exit_dte: 21
+
+  risk:
+    max_account_risk_pct: 0.25
