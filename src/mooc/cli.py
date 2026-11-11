@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -20,12 +21,16 @@ from .config import load_config
 from .daemon.lifecycle import daemon_paths, is_running, socket_is_live
 from .domain.options import LegAction, OptionLeg
 from .opend import events as events_api
-from .opend import option, trade, watchlist
+from .opend import option as option_api
 from .opend import quote as quote_api
+from .opend import trade as trade_api
 from .opend import volatility as vol_api
+from .opend import watchlist as watchlist_api
 from .opend.client import OpendClient
 from .opend.errors import MoocError
 from .policy import resolve_trd_env
+from .services import monitor as monitor_svc
+from .services import recording
 from .services.analyze import analyze_symbol
 from .services.journal import report as journal_report
 from .services.rules import load_rules
@@ -93,7 +98,7 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
 # -- probe (direct SDK) ---------------------------------------------------
 def _cmd_probe_expirations(args: argparse.Namespace) -> int:
     with _connected() as client:
-        dates = option.list_expirations(client, args.underlying)
+        dates = option_api.list_expirations(client, args.underlying)
     if args.json:
         print(json.dumps(dates, ensure_ascii=False))
     else:
@@ -105,7 +110,7 @@ def _cmd_probe_expirations(args: argparse.Namespace) -> int:
 
 def _cmd_probe_chain(args: argparse.Namespace) -> int:
     with _connected() as client:
-        chain = option.get_chain(
+        chain = option_api.get_chain(
             client, args.underlying, start=args.start, end=args.end, option_type=args.type
         )
     if args.json:
@@ -132,7 +137,7 @@ def _cmd_probe_chain(args: argparse.Namespace) -> int:
 def _cmd_probe_combo(args: argparse.Namespace) -> int:
     legs = _parse_legs(args.legs)
     with _connected() as client:
-        analysis = option.combo_analysis(client, legs)
+        analysis = option_api.combo_analysis(client, legs)
     if args.json:
         print(
             json.dumps(
@@ -166,7 +171,7 @@ def _cmd_probe_combo(args: argparse.Namespace) -> int:
 # -- probe (watchlist, read-only, direct SDK) -----------------------------
 def _cmd_probe_groups(args: argparse.Namespace) -> int:
     with _connected() as client:
-        groups = watchlist.list_groups(client)
+        groups = watchlist_api.list_groups(client)
     if args.json:
         print(json.dumps([asdict(group) for group in groups], ensure_ascii=False, indent=2))
     else:
@@ -178,8 +183,8 @@ def _cmd_probe_groups(args: argparse.Namespace) -> int:
 
 def _cmd_probe_watchlist(args: argparse.Namespace) -> int:
     with _connected() as client:
-        members = watchlist.list_group_members(client, args.group)
-        summaries = watchlist.group_option_summaries(client, members, limit=args.limit)
+        members = watchlist_api.list_group_members(client, args.group)
+        summaries = watchlist_api.group_option_summaries(client, members, limit=args.limit)
     if args.json:
         print(json.dumps([asdict(s) for s in summaries], ensure_ascii=False, indent=2))
     else:
@@ -296,12 +301,21 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
         equity = None
         if args.acc_id:
             trd_env = resolve_trd_env(None, cfg.trading)
-            funds = trade.get_funds(
+            funds = trade_api.get_funds(
                 client, trd_env, args.acc_id, currency=cfg.trading.default_currency
             )
             if funds is not None:
                 equity = funds.total_assets
         output = analyze_symbol(client, args.code, rules=loaded, config=cfg, account_equity=equity)
+    conn = storage_db.open_db(cfg.storage.path)
+    try:
+        from datetime import datetime as _dt
+
+        recording.record_decision(
+            conn, output, created_at=_dt.fromisoformat(output.analysis_timestamp)
+        )
+    finally:
+        conn.close()
     if args.json:
         print(json.dumps(output.to_dict(), ensure_ascii=False, indent=2))
     else:
@@ -316,6 +330,7 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
             print("  rejection_reasons:")
             for reason in output.rejection_reasons:
                 print(f"    - {reason}")
+        print(f"  (recorded -> {cfg.storage.path})")
     return 0
 
 
@@ -346,7 +361,7 @@ def _cmd_probe_accounts(args: argparse.Namespace) -> int:
     cfg = load_config()
     trd_env = resolve_trd_env(args.trd_env, cfg.trading)
     with _connected() as client:
-        accounts = trade.list_accounts(client, trd_env)
+        accounts = trade_api.list_accounts(client, trd_env)
     if args.json:
         print(json.dumps([asdict(a) for a in accounts], ensure_ascii=False, indent=2))
     else:
@@ -364,7 +379,7 @@ def _cmd_probe_funds(args: argparse.Namespace) -> int:
     trd_env = resolve_trd_env(args.trd_env, cfg.trading)
     currency = args.currency or cfg.trading.default_currency
     with _connected() as client:
-        funds = trade.get_funds(client, trd_env, args.acc_id, currency=currency)
+        funds = trade_api.get_funds(client, trd_env, args.acc_id, currency=currency)
     if funds is None:
         print(f"no funds returned for {trd_env}", file=sys.stderr)
         return 1
@@ -386,7 +401,7 @@ def _cmd_probe_positions(args: argparse.Namespace) -> int:
     trd_env = resolve_trd_env(args.trd_env, cfg.trading)
     currency = args.currency or cfg.trading.default_currency
     with _connected() as client:
-        positions = trade.list_positions(
+        positions = trade_api.list_positions(
             client, trd_env, args.acc_id, code=args.code, currency=currency
         )
     if args.json:
@@ -411,11 +426,100 @@ def _cmd_probe_positions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_probe_monitor(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    trd_env = resolve_trd_env(args.trd_env, cfg.trading)
+    currency = args.currency or cfg.trading.default_currency
+    try:
+        rules = [r for r in load_rules(cfg.rules.path) if r.enabled]
+    except MoocError:
+        rules = []
+    rule = rules[0] if rules else None
+    take_profit = None if rule is None else rule.take_profit_pct
+    stop_multiple = None if rule is None else rule.stop_review_multiple
+    time_exit = None if rule is None else rule.time_exit_dte
+
+    with _connected() as client:
+        positions = trade_api.list_positions(
+            client, trd_env, args.acc_id, code=args.code, currency=currency
+        )
+        codes = [p.code for p in positions]
+        now = datetime.now(UTC)
+        snaps = (
+            option_api.snapshots(
+                client, codes, now=now, max_age_seconds=cfg.data_quality.realtime_max_age_sec
+            )
+            if codes
+            else {}
+        )
+    rows = []
+    for pos in positions:
+        snap = snaps.get(pos.code)
+        # positive qty => long (sell bid to close); negative => short (buy ask to close)
+        action = "BUY" if pos.qty < 0 else "SELL"
+        leg = monitor_svc.MonitoredLeg(
+            code=pos.code,
+            action=action,
+            quantity=abs(pos.qty),
+            bid=snap.bid if snap else None,
+            ask=snap.ask if snap else None,
+        )
+        entry_credit = abs(pos.average_cost or 0.0)
+        cost = monitor_svc.cost_to_close([leg])
+        signals = monitor_svc.monitor_position(
+            legs=[leg],
+            entry_credit=entry_credit,
+            dte=_dte_from_code(pos.code),
+            take_profit_pct=take_profit if isinstance(take_profit, (int, float)) else None,
+            stop_review_multiple=(
+                stop_multiple if isinstance(stop_multiple, (int, float)) else None
+            ),
+            time_exit_dte=time_exit if isinstance(time_exit, int) else None,
+        )
+        rows.append(
+            {
+                "code": pos.code,
+                "qty": pos.qty,
+                "side": pos.position_side,
+                "entry_credit": entry_credit,
+                "cost_to_close": cost,
+                "signals": [{"kind": s.kind, "reason": s.reason} for s in signals],
+                "dte": _dte_from_code(pos.code),
+                "quote_stale": snap.quality.is_stale if snap else None,
+            }
+        )
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        print(f"monitor ({trd_env}, acc {args.acc_id}): {len(rows)} positions")
+        for row in rows:
+            raw = row["signals"]
+            sigs = ",".join(s["kind"] for s in raw) if isinstance(raw, list) else "-"
+            if not sigs:
+                sigs = "-"
+            print(
+                f"  {row['code']} qty={row['qty']:g} dte={row['dte']} "
+                f"close_cost={row['cost_to_close']} signals={sigs}"
+            )
+    return 0
+
+
+def _dte_from_code(code: str) -> int | None:
+    match = re.search(r"(\d{6})[CP]", code)
+    if not match:
+        return None
+    try:
+        expiry = datetime.strptime(match.group(1), "%y%m%d").date()
+    except ValueError:
+        return None
+    return (expiry - date.today()).days
+
+
 def _cmd_probe_orders(args: argparse.Namespace) -> int:
     cfg = load_config()
     trd_env = resolve_trd_env(args.trd_env, cfg.trading)
     with _connected() as client:
-        orders = trade.list_orders(
+        orders = trade_api.list_orders(
             client,
             trd_env,
             args.acc_id,
@@ -636,7 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch = probe_sub.add_parser("watchlist", help="option summary for a self-selected group")
     watch.add_argument("group")
-    watch.add_argument("--limit", type=_positive_int, default=watchlist.DEFAULT_LIMIT)
+    watch.add_argument("--limit", type=_positive_int, default=watchlist_api.DEFAULT_LIMIT)
     watch.add_argument("--json", action="store_true")
     watch.set_defaults(func=_cmd_probe_watchlist)
 
@@ -670,6 +774,16 @@ def build_parser() -> argparse.ArgumentParser:
     orders.add_argument("--end")
     orders.add_argument("--json", action="store_true")
     orders.set_defaults(func=_cmd_probe_orders)
+
+    monitor = probe_sub.add_parser(
+        "monitor", help="check open positions against exit rules (take-profit/stop/time)"
+    )
+    monitor.add_argument("--acc-id", type=_positive_int, required=True)
+    monitor.add_argument("--trd-env")
+    monitor.add_argument("--code")
+    monitor.add_argument("--currency")
+    monitor.add_argument("--json", action="store_true")
+    monitor.set_defaults(func=_cmd_probe_monitor)
 
     daemon = sub.add_parser("daemon", help="manage the mooc daemon")
     daemon_sub = daemon.add_subparsers(dest="daemon", required=True)

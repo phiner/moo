@@ -25,6 +25,7 @@ from ..opend.client import OpendClient
 from ..opend.errors import MoocError
 from ..storage import db as storage_db
 from ..storage import repo as storage_repo
+from . import recording
 from .analyze import analyze_symbol
 from .journal import report as journal_report
 from .rules import load_rules
@@ -136,7 +137,20 @@ class MarketDataService:
             rules=self._rules,
             config=self._config,
         )
+        self._record(output)
         return protocol.AnalysisResult(request_id=request.request_id, output=output.to_dict())
+
+    def _record(self, output) -> None:
+        """Best-effort persistence; never fail the analysis because of storage."""
+        try:
+            created_at = datetime.fromisoformat(output.analysis_timestamp)
+            conn = storage_db.open_db(self._config.storage.path)
+            try:
+                recording.record_decision(conn, output, created_at=created_at)
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001 - storage must not break analysis
+            logger.warning("failed to record decision: %s", exc)
 
     def _journal(self, request: protocol.GetJournal) -> protocol.Response:
         conn = storage_db.open_db(self._config.storage.path)
