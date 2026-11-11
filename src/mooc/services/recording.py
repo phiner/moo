@@ -19,30 +19,47 @@ __all__ = ["record_decision"]
 
 def record_decision(
     conn: sqlite3.Connection, output: DecisionOutput, *, created_at: datetime
-) -> None:
-    """Write one decision as a candidate, a signal, and a risk snapshot."""
+) -> bool:
+    """Atomically write one decision; returns False if already recorded.
+
+    Idempotent per (symbol, strategy, created_at). All three rows commit together
+    so partial records are never persisted.
+    """
     payload = json.dumps(output.to_dict(), ensure_ascii=False)
     strategy = str(output.strategy.get("type") or output.recommended_action)
-    repo.save_candidate(
-        conn,
-        symbol=output.symbol,
-        strategy=strategy,
-        status=output.trade_status.value,
-        payload=payload,
-        created_at=created_at,
-    )
-    repo.save_signal(
-        conn,
-        symbol=output.symbol,
-        strategy=strategy,
-        status=output.trade_status.value,
-        action=output.recommended_action,
-        payload=payload,
-        created_at=created_at,
-    )
-    repo.save_risk_snapshot(
-        conn,
-        symbol=output.symbol,
-        payload=json.dumps(output.risk, ensure_ascii=False),
-        created_at=created_at,
-    )
+    try:
+        if repo.has_decision_record(
+            conn, symbol=output.symbol, strategy=strategy, created_at=created_at
+        ):
+            return False
+        repo.save_candidate(
+            conn,
+            symbol=output.symbol,
+            strategy=strategy,
+            status=output.trade_status.value,
+            payload=payload,
+            created_at=created_at,
+            commit=False,
+        )
+        repo.save_signal(
+            conn,
+            symbol=output.symbol,
+            strategy=strategy,
+            status=output.trade_status.value,
+            action=output.recommended_action,
+            payload=payload,
+            created_at=created_at,
+            commit=False,
+        )
+        repo.save_risk_snapshot(
+            conn,
+            symbol=output.symbol,
+            payload=json.dumps(output.risk, ensure_ascii=False),
+            created_at=created_at,
+            commit=False,
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise

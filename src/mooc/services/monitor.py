@@ -15,13 +15,19 @@ from .risk import exit_signals
 
 __all__ = ["MonitoredLeg", "cost_to_close", "monitor_position"]
 
-MULTIPLIER = 100
-
 
 @dataclass(frozen=True)
 class MonitoredLeg:
+    """One leg priced for monitoring.
+
+    ``action`` is the *close* action used by :func:`cost_to_close`: ``"SELL"``
+    means buy back at the ask (closing a short), any other value means sell at
+    the bid (closing a long). ``quantity`` is carried for context but pricing is
+    per-share to match premium/credit units.
+    """
+
     code: str
-    action: str  # BUY | SELL
+    action: str  # close action: SELL => buy back at ask, BUY => sell at bid
     quantity: float
     bid: float | None = None
     ask: float | None = None

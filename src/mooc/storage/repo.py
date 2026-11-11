@@ -21,6 +21,7 @@ __all__ = [
     "add_journal_entry",
     "confirmations",
     "events",
+    "has_decision_record",
     "insert_event",
     "journal_entries",
     "latest_option_quote",
@@ -346,6 +347,7 @@ def save_candidate(
     status: str,
     created_at: datetime,
     payload: str = "{}",
+    commit: bool = True,
 ) -> None:
     conn.execute(
         """
@@ -354,7 +356,8 @@ def save_candidate(
         """,
         (symbol, strategy, status, payload, _iso(created_at)),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def save_signal(
@@ -366,6 +369,7 @@ def save_signal(
     created_at: datetime,
     action: str = "",
     payload: str = "{}",
+    commit: bool = True,
 ) -> None:
     conn.execute(
         """
@@ -374,7 +378,8 @@ def save_signal(
         """,
         (symbol, strategy, status, action, payload, _iso(created_at)),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def save_risk_snapshot(
@@ -383,12 +388,28 @@ def save_risk_snapshot(
     symbol: str,
     created_at: datetime,
     payload: str = "{}",
+    commit: bool = True,
 ) -> None:
     conn.execute(
         "INSERT INTO risk_snapshots (symbol, payload, created_at) VALUES (?, ?, ?)",
         (symbol, payload, _iso(created_at)),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
+
+
+def has_decision_record(
+    conn: sqlite3.Connection, *, symbol: str, strategy: str, created_at: datetime
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM trade_candidates
+        WHERE symbol = ? AND strategy = ? AND created_at = ?
+        LIMIT 1
+        """,
+        (symbol, strategy, _iso(created_at)),
+    ).fetchone()
+    return row is not None
 
 
 # -- journal / confirmations ----------------------------------------------

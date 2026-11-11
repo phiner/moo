@@ -158,6 +158,18 @@ DDL_STATEMENTS: tuple[str, ...] = (
         ON trade_journal (symbol, created_at)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_candidates_symbol_time
+        ON trade_candidates (symbol, strategy, created_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_symbol_time
+        ON trade_signals (symbol, strategy, created_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_risk_snapshots_symbol_time
+        ON risk_snapshots (symbol, created_at)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS confirmations (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         symbol       TEXT NOT NULL,

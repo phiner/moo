@@ -307,17 +307,28 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
             if funds is not None:
                 equity = funds.total_assets
         output = analyze_symbol(client, args.code, rules=loaded, config=cfg, account_equity=equity)
-    conn = storage_db.open_db(cfg.storage.path)
+    recorded = False
+    record_note = None
     try:
-        from datetime import datetime as _dt
+        conn = storage_db.open_db(cfg.storage.path)
+        try:
+            recorded = recording.record_decision(
+                conn,
+                output,
+                created_at=datetime.fromisoformat(output.analysis_timestamp),
+            )
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 - best-effort like daemon
+        record_note = f"recording failed: {exc}"
+        logging.getLogger(__name__).warning("failed to record decision: %s", exc)
 
-        recording.record_decision(
-            conn, output, created_at=_dt.fromisoformat(output.analysis_timestamp)
-        )
-    finally:
-        conn.close()
     if args.json:
-        print(json.dumps(output.to_dict(), ensure_ascii=False, indent=2))
+        payload = output.to_dict()
+        payload["recorded"] = recorded
+        if record_note:
+            payload["record_note"] = record_note
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(f"{output.symbol} analysis @ {output.analysis_timestamp}")
         print(f"  data_quality     : {output.data_quality}")
@@ -330,7 +341,12 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
             print("  rejection_reasons:")
             for reason in output.rejection_reasons:
                 print(f"    - {reason}")
-        print(f"  (recorded -> {cfg.storage.path})")
+        if record_note:
+            print(f"  (not recorded: {record_note})")
+        elif recorded:
+            print(f"  (recorded -> {cfg.storage.path})")
+        else:
+            print(f"  (already recorded -> {cfg.storage.path})")
     return 0
 
 
@@ -455,37 +471,50 @@ def _cmd_probe_monitor(args: argparse.Namespace) -> int:
     rows = []
     for pos in positions:
         snap = snaps.get(pos.code)
-        # positive qty => long (sell bid to close); negative => short (buy ask to close)
-        action = "BUY" if pos.qty < 0 else "SELL"
+        stale = bool(snap.quality.is_stale) if snap else False
+        dte = _dte_from_code(pos.code)
+        is_short = pos.qty < 0
+        # monitor.cost_to_close: SELL => buy back at ask (close short), else sell at bid.
+        close_action = "SELL" if is_short else "BUY"
+        # Credit-style (take-profit/stop) signals apply to short/credit legs only;
+        # for long legs pass 0 so price signals are suppressed but time-exit still runs.
+        signal_credit = abs(pos.average_cost or 0.0) if is_short else 0.0
+        tp = take_profit if isinstance(take_profit, (int, float)) else None
+        stop_mult = stop_multiple if isinstance(stop_multiple, (int, float)) else None
+        time_exit_dte = int(time_exit) if isinstance(time_exit, (int, float)) else None
+
+        bid = None if (stale or snap is None) else snap.bid
+        ask = None if (stale or snap is None) else snap.ask
         leg = monitor_svc.MonitoredLeg(
             code=pos.code,
-            action=action,
+            action=close_action,
             quantity=abs(pos.qty),
-            bid=snap.bid if snap else None,
-            ask=snap.ask if snap else None,
+            bid=bid,
+            ask=ask,
         )
-        entry_credit = abs(pos.average_cost or 0.0)
-        cost = monitor_svc.cost_to_close([leg])
+        cost = None if stale else monitor_svc.cost_to_close([leg])
         signals = monitor_svc.monitor_position(
             legs=[leg],
-            entry_credit=entry_credit,
-            dte=_dte_from_code(pos.code),
-            take_profit_pct=take_profit if isinstance(take_profit, (int, float)) else None,
-            stop_review_multiple=(
-                stop_multiple if isinstance(stop_multiple, (int, float)) else None
-            ),
-            time_exit_dte=time_exit if isinstance(time_exit, int) else None,
+            entry_credit=signal_credit,
+            dte=dte,
+            take_profit_pct=tp,
+            stop_review_multiple=stop_mult,
+            time_exit_dte=time_exit_dte,
         )
+        credit_signals_applicable = is_short
         rows.append(
             {
                 "code": pos.code,
                 "qty": pos.qty,
                 "side": pos.position_side,
-                "entry_credit": entry_credit,
+                "entry_credit_per_share": abs(pos.average_cost or 0.0),
                 "cost_to_close": cost,
                 "signals": [{"kind": s.kind, "reason": s.reason} for s in signals],
-                "dte": _dte_from_code(pos.code),
-                "quote_stale": snap.quality.is_stale if snap else None,
+                "dte": dte,
+                "quote_stale": stale if snap else None,
+                "signals_suppressed_stale": stale,
+                "credit_signals_applicable": credit_signals_applicable,
+                "monitor_note": "single-leg approximation",
             }
         )
     if args.json:
@@ -497,9 +526,10 @@ def _cmd_probe_monitor(args: argparse.Namespace) -> int:
             sigs = ",".join(s["kind"] for s in raw) if isinstance(raw, list) else "-"
             if not sigs:
                 sigs = "-"
+            suffix = " [stale:suppressed]" if row["signals_suppressed_stale"] else ""
             print(
                 f"  {row['code']} qty={row['qty']:g} dte={row['dte']} "
-                f"close_cost={row['cost_to_close']} signals={sigs}"
+                f"close_cost={row['cost_to_close']} signals={sigs}{suffix}"
             )
     return 0
 
