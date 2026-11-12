@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from ..opend.errors import MoocError
 
@@ -83,6 +84,13 @@ class DecisionOutput:
     exit_conditions: list[str] = field(default_factory=list)
     rejection_reasons: list[str] = field(default_factory=list)
     missing_data: list[str] = field(default_factory=list)
+    # P0.2 additive traceability/context fields (backward-compatible defaults).
+    analysis_id: str | None = None
+    requested_at: str | None = None
+    rules_version: str | None = None
+    analysis_status: str | None = None
+    account: dict[str, Any] | None = None
+    context: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -100,4 +108,10 @@ class DecisionOutput:
             "exit_conditions": self.exit_conditions,
             "rejection_reasons": self.rejection_reasons,
             "missing_data": self.missing_data,
+            "analysis_id": self.analysis_id,
+            "requested_at": self.requested_at,
+            "rules_version": self.rules_version,
+            "analysis_status": self.analysis_status,
+            "account": self.account,
+            "context": self.context,
         }

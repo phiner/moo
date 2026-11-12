@@ -7,15 +7,19 @@ so misconfiguration fails fast.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
-from ..domain.rules import UNSET, Maybe, Regimes, StrategyRule
+from ..domain.rules import UNSET, Maybe, Regimes, StrategyRule, Unset
 from ..opend.errors import MoocError
 
-__all__ = ["load_rules", "parse_rule"]
+__all__ = ["compute_rules_version", "load_rules", "parse_rule"]
 
 _DEFAULT_SUFFIXES = (".yaml", ".yml")
 
@@ -116,3 +120,27 @@ def load_rules(path: str | Path) -> list[StrategyRule]:
             continue
         rules.append(parse_rule(document))
     return rules
+
+
+def _normalize_rule_value(value: Any) -> Any:
+    if isinstance(value, Unset):
+        return {"__unset__": True}
+    if isinstance(value, tuple):
+        return [_normalize_rule_value(v) for v in value]
+    if isinstance(value, list):
+        return [_normalize_rule_value(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _normalize_rule_value(v) for k, v in sorted(value.items())}
+    if is_dataclass(value) and not isinstance(value, type):
+        return _normalize_rule_value(asdict(value))
+    return value
+
+
+def compute_rules_version(rules: list[StrategyRule], rules_path: str | Path | None = None) -> str:
+    """Deterministic SHA-256 fingerprint of the effective loaded rules."""
+    payload = {
+        "rules_path": str(rules_path) if rules_path is not None else None,
+        "rules": [_normalize_rule_value(rule) for rule in rules],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

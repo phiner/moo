@@ -77,6 +77,10 @@ class GetAnalysis(BaseModel):
     kind: Literal["GetAnalysis"] = "GetAnalysis"
     request_id: int | None = None
     code: str = Field(min_length=1)
+    # P0.2 additive, optional account context (daemon-resolved when possible).
+    acc_id: int | None = Field(default=None, gt=0)
+    trd_env: Literal["SIMULATE", "REAL"] | None = None
+    currency: str | None = None
 
 
 class GetJournal(BaseModel):
@@ -273,7 +277,17 @@ class EventsResult(BaseModel):
 class AnalysisResult(BaseModel):
     kind: Literal["AnalysisResult"] = "AnalysisResult"
     request_id: int | None = None
+    # Backward-compatible: existing clients read the decision payload from `output`.
     output: dict
+    # P0.2 additive fields (optional for older producers/consumers tolerance).
+    analysis_id: str | None = None
+    symbol: str | None = None
+    requested_at: str | None = None
+    rules_version: str | None = None
+    analysis_status: str | None = None
+    persistence: dict | None = None
+    account: dict | None = None
+    notes: list[str] | None = None
 
 
 class JournalResult(BaseModel):

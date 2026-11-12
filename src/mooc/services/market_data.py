@@ -25,10 +25,9 @@ from ..opend.client import OpendClient
 from ..opend.errors import MoocError
 from ..storage import db as storage_db
 from ..storage import repo as storage_repo
-from . import recording
-from .analyze import analyze_symbol
+from .analysis import analysis_result_to_ipc, resolve_account_context, run_analysis
 from .journal import report as journal_report
-from .rules import load_rules
+from .rules import compute_rules_version, load_rules
 from .volatility import summarize
 
 logger = logging.getLogger(__name__)
@@ -41,14 +40,15 @@ class MarketDataService:
         self._client = client
         self._config = config or AppConfig()
         self._lock = threading.Lock()
-        self._rules = self._load_rules()
+        self._rules, self._rules_version, self._rules_load_error = self._load_rules()
 
-    def _load_rules(self) -> list[StrategyRule]:
+    def _load_rules(self) -> tuple[list[StrategyRule], str | None, str | None]:
         try:
-            return load_rules(self._config.rules.path)
+            rules = load_rules(self._config.rules.path)
         except MoocError as exc:
             logger.warning("no strategy rules loaded: %s", exc)
-            return []
+            return [], None, str(exc)
+        return rules, compute_rules_version(rules, self._config.rules.path), None
 
     # -- request dispatch --------------------------------------------------
     def dispatch(self, request) -> protocol.Response:
@@ -131,26 +131,27 @@ class MarketDataService:
         )
 
     def _analysis(self, request: protocol.GetAnalysis) -> protocol.Response:
-        output = analyze_symbol(
+        account, account_note = resolve_account_context(
             self._client,
-            request.code,
-            rules=self._rules,
-            config=self._config,
+            self._config,
+            account_id=getattr(request, "acc_id", None),
+            trd_env=getattr(request, "trd_env", None),
+            currency=getattr(request, "currency", None),
         )
-        self._record(output)
-        return protocol.AnalysisResult(request_id=request.request_id, output=output.to_dict())
-
-    def _record(self, output) -> None:
-        """Best-effort persistence; never fail the analysis because of storage."""
-        try:
-            created_at = datetime.fromisoformat(output.analysis_timestamp)
-            conn = storage_db.open_db(self._config.storage.path)
-            try:
-                recording.record_decision(conn, output, created_at=created_at)
-            finally:
-                conn.close()
-        except Exception as exc:  # noqa: BLE001 - storage must not break analysis
-            logger.warning("failed to record decision: %s", exc)
+        run = run_analysis(
+            self._client,
+            self._config,
+            symbol=request.code,
+            rules=self._rules,
+            rules_version_value=self._rules_version,
+            rules_load_error=self._rules_load_error,
+            account=account,
+            account_note=account_note,
+            account_requested=getattr(request, "acc_id", None) is not None,
+            entrypoint="daemon",
+            persist=True,
+        )
+        return analysis_result_to_ipc(run, request_id=request.request_id)
 
     def _journal(self, request: protocol.GetJournal) -> protocol.Response:
         conn = storage_db.open_db(self._config.storage.path)

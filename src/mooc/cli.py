@@ -30,8 +30,6 @@ from .opend.client import OpendClient
 from .opend.errors import MoocError
 from .policy import resolve_trd_env
 from .services import monitor as monitor_svc
-from .services import recording
-from .services.analyze import analyze_symbol
 from .services.journal import report as journal_report
 from .services.rules import load_rules
 from .services.volatility import summarize
@@ -295,42 +293,53 @@ def _cmd_probe_events(args: argparse.Namespace) -> int:
 
 
 def _cmd_probe_analyze(args: argparse.Namespace) -> int:
-    cfg = load_config()
-    loaded = load_rules(cfg.rules.path)
-    with _connected() as client:
-        equity = None
-        if args.acc_id:
-            trd_env = resolve_trd_env(None, cfg.trading)
-            funds = trade_api.get_funds(
-                client, trd_env, args.acc_id, currency=cfg.trading.default_currency
-            )
-            if funds is not None:
-                equity = funds.total_assets
-        output = analyze_symbol(client, args.code, rules=loaded, config=cfg, account_equity=equity)
-    recorded = False
-    record_note = None
-    try:
-        conn = storage_db.open_db(cfg.storage.path)
-        try:
-            recorded = recording.record_decision(
-                conn,
-                output,
-                created_at=datetime.fromisoformat(output.analysis_timestamp),
-            )
-        finally:
-            conn.close()
-    except Exception as exc:  # noqa: BLE001 - best-effort like daemon
-        record_note = f"recording failed: {exc}"
-        logging.getLogger(__name__).warning("failed to record decision: %s", exc)
+    from .services.analysis import load_rules_with_version, resolve_account_context, run_analysis
 
+    cfg = load_config()
+    rules, rules_version_value, rules_load_error = load_rules_with_version(cfg)
+    with _connected() as client:
+        account, account_note = resolve_account_context(
+            client,
+            cfg,
+            account_id=getattr(args, "acc_id", None),
+            trd_env=getattr(args, "trd_env", None),
+            currency=getattr(args, "currency", None),
+        )
+        run = run_analysis(
+            client,
+            cfg,
+            symbol=args.code,
+            rules=rules,
+            rules_version_value=rules_version_value,
+            rules_load_error=rules_load_error,
+            account=account,
+            account_note=account_note,
+            account_requested=getattr(args, "acc_id", None) is not None,
+            entrypoint="cli",
+            persist=True,
+        )
+
+    output = run.output
+    persistence = run.persistence
     if args.json:
         payload = output.to_dict()
-        payload["recorded"] = recorded
-        if record_note:
-            payload["record_note"] = record_note
+        payload["analysis_id"] = run.analysis_id
+        payload["symbol"] = run.symbol
+        payload["requested_at"] = run.requested_at
+        payload["rules_version"] = run.rules_version
+        payload["analysis_status"] = run.analysis_status
+        payload["persistence"] = persistence.to_dict()
+        payload["account"] = run.account
+        payload["notes"] = list(run.notes)
+        payload["recorded"] = persistence.status == "saved"
+        if persistence.status == "failed" and persistence.message:
+            payload["record_note"] = persistence.message
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(f"{output.symbol} analysis @ {output.analysis_timestamp}")
+        print(f"  analysis_id      : {run.analysis_id}")
+        print(f"  analysis_status  : {run.analysis_status}")
+        print(f"  rules_version    : {run.rules_version}")
         print(f"  data_quality     : {output.data_quality}")
         print(f"  market_regime    : {output.market_regime}")
         print(f"  volatility_regime: {output.volatility_regime}")
@@ -341,12 +350,18 @@ def _cmd_probe_analyze(args: argparse.Namespace) -> int:
             print("  rejection_reasons:")
             for reason in output.rejection_reasons:
                 print(f"    - {reason}")
-        if record_note:
-            print(f"  (not recorded: {record_note})")
-        elif recorded:
+        risk = output.risk or {}
+        if "recommended_contracts" in risk:
+            print(f"  contracts        : {risk.get('recommended_contracts')}")
+        print(f"  persistence      : {persistence.status}")
+        if persistence.status == "failed" and persistence.message:
+            print(f"  persistence_note : {persistence.message}")
+        elif persistence.status == "saved":
             print(f"  (recorded -> {cfg.storage.path})")
-        else:
+        elif persistence.status == "skipped":
             print(f"  (already recorded -> {cfg.storage.path})")
+        for note in run.notes:
+            print(f"  note             : {note}")
     return 0
 
 
@@ -474,10 +489,7 @@ def _cmd_probe_monitor(args: argparse.Namespace) -> int:
         stale = bool(snap.quality.is_stale) if snap else False
         dte = _dte_from_code(pos.code)
         is_short = pos.qty < 0
-        # monitor.cost_to_close: SELL => buy back at ask (close short), else sell at bid.
         close_action = "SELL" if is_short else "BUY"
-        # Credit-style (take-profit/stop) signals apply to short/credit legs only;
-        # for long legs pass 0 so price signals are suppressed but time-exit still runs.
         signal_credit = abs(pos.average_cost or 0.0) if is_short else 0.0
         tp = take_profit if isinstance(take_profit, (int, float)) else None
         stop_mult = stop_multiple if isinstance(stop_multiple, (int, float)) else None
@@ -755,6 +767,8 @@ def build_parser() -> argparse.ArgumentParser:
     analysis = probe_sub.add_parser("analyze", help="full analysis (14.1 output) for a symbol")
     analysis.add_argument("code")
     analysis.add_argument("--acc-id", type=_positive_int, help="account id for risk sizing")
+    analysis.add_argument("--trd-env", help="trade environment for account context (e.g. SIMULATE)")
+    analysis.add_argument("--currency", help="account currency for funds lookup")
     analysis.add_argument("--json", action="store_true")
     analysis.set_defaults(func=_cmd_probe_analyze)
 
